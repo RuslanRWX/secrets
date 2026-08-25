@@ -1,0 +1,54 @@
+# Local stack: PostgreSQL, the API, and the web UI behind nginx.
+# Copy .env.example to .env and set the two keys before starting.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: secrets
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secrets}
+      POSTGRES_DB: secrets
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U secrets -d secrets']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    image: ruslanrwx/secrets-api:${TAG:-latest}
+    build:
+      context: ./backend
+      args:
+        VERSION: ${TAG:-dev}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://secrets:${POSTGRES_PASSWORD:-secrets}@db:5432/secrets?sslmode=disable
+      # Encrypts every stored secret. Losing it means losing the data.
+      MASTER_KEY: ${MASTER_KEY:?set MASTER_KEY in .env}
+      # Signs session tokens.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      TRUST_PROXY_HEADERS: 'true'
+      LOG_LEVEL: info
+    ports:
+      - '${API_PORT:-8080}:8080'
+
+  ui:
+    image: ruslanrwx/secrets-ui:${TAG:-latest}
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      API_URL: http://api:8080
+    ports:
+      - '${UI_PORT:-8088}:8080'
+
+volumes:
+  db-data:
