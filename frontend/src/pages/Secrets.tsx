@@ -468,7 +468,7 @@ function SecretDetail({
                         type="checkbox"
                         checked={Boolean(share)}
                         onChange={(e) => toggleShare(group.id, e.target.checked, false)}
-                        className="h-3.5 w-3.5 accent-[#C79A3C]"
+                        className="h-3.5 w-3.5 accent-brass"
                       />
                       <span className={share ? 'text-chalk' : 'text-muted'}>{group.name}</span>
                     </label>
@@ -478,7 +478,7 @@ function SecretDetail({
                           type="checkbox"
                           checked={share.canWrite}
                           onChange={(e) => toggleShare(group.id, true, e.target.checked)}
-                          className="h-3 w-3 accent-[#C79A3C]"
+                          className="h-3 w-3 accent-brass"
                         />
                         can edit
                       </label>

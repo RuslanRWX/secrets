@@ -96,6 +96,56 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, body)
 }
 
+type updateProfileRequest struct {
+	Email *string `json:"email"`
+}
+
+// handleUpdateProfile lets a signed-in user change their own email address.
+// Display name, roles and permissions are deliberately not reachable here:
+// those stay with an administrator.
+func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r.Context())
+	if p.User == nil {
+		forbidden(w, "an API token cannot edit a profile")
+
+		return
+	}
+
+	var req updateProfileRequest
+	if err := decode(r, &req); err != nil {
+		badRequest(w, err.Error())
+
+		return
+	}
+
+	if req.Email != nil {
+		trimmed := strings.TrimSpace(*req.Email)
+		if trimmed != "" && !strings.Contains(trimmed, "@") {
+			badRequest(w, "that does not look like an email address")
+
+			return
+		}
+		req.Email = &trimmed
+	}
+	user, err := s.store.UpdateUser(r.Context(), p.User.ID, store.UserUpdate{
+		Email: req.Email,
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			notFound(w)
+
+			return
+		}
+		s.serverError(w, r, err)
+
+		return
+	}
+
+	s.audit(r, p, "user.email_changed", "user", p.User.ID.String(), nil)
+
+	writeJSON(w, http.StatusOK, user)
+}
+
 type changePasswordRequest struct {
 	CurrentPassword string `json:"currentPassword"`
 	NewPassword     string `json:"newPassword"`

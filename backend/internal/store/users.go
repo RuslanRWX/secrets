@@ -92,7 +92,7 @@ type UserUpdate struct {
 func (s *Store) UpdateUser(ctx context.Context, id uuid.UUID, up UserUpdate) (*User, error) {
 	row := s.pool.QueryRow(ctx,
 		`UPDATE users SET
-		    email                = COALESCE(NULLIF($2, ''), email),
+		    email                = COALESCE($2, email),
 		    display_name         = COALESCE($3, display_name),
 		    is_admin             = COALESCE($4, is_admin),
 		    is_active            = COALESCE($5, is_active),
@@ -100,7 +100,7 @@ func (s *Store) UpdateUser(ctx context.Context, id uuid.UUID, up UserUpdate) (*U
 		    updated_at           = now()
 		  WHERE id = $1
 		  RETURNING `+userColumns,
-		id, derefString(up.Email), up.DisplayName, up.IsAdmin, up.IsActive, up.Permissions)
+		id, up.Email, up.DisplayName, up.IsAdmin, up.IsActive, up.Permissions)
 
 	return scanUser(row)
 }
@@ -144,12 +144,4 @@ func (s *Store) CountAdmins(ctx context.Context) (int, error) {
 		`SELECT count(*) FROM users WHERE is_admin AND is_active`).Scan(&n)
 
 	return n, err
-}
-
-func derefString(p *string) string {
-	if p == nil {
-		return ""
-	}
-
-	return *p
 }

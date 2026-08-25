@@ -50,11 +50,16 @@ curl -X POST https://secrets.example.com/api/v1/setup \
 | --- | --- | --- |
 | `POST` | `/auth/login` | Returns `token`, `expiresAt`, `user` and `mustChangePassword`. |
 | `GET` | `/auth/me` | The current principal, its permissions and, for a token, the token itself. |
+| `PATCH` | `/auth/me` | Change your own email address. Send `""` to clear it. |
 | `POST` | `/auth/change-password` | Requires the current password. Clears the forced-change flag. |
 | `GET` | `/meta/permissions` | The permission catalog and the defaults for a new user. |
 
 While `mustChangePassword` is set, every other endpoint returns `403` with the
 code `password_change_required`.
+
+`PATCH /auth/me` accepts only `email`. Display name, roles and permissions are
+not fields of this endpoint, so a request carrying them is rejected with `400`
+rather than silently ignored — an account cannot widen its own access here.
 
 ## Secrets
 

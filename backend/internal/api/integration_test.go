@@ -783,3 +783,128 @@ func TestConcurrentMigrationsAreSafe(t *testing.T) {
 		t.Fatalf("expected 1 recorded migration, got %d", applied)
 	}
 }
+
+type profileView struct {
+	DisplayName string `json:"displayName"`
+	Email       string `json:"email"`
+}
+
+func TestUserCanChangeTheirOwnEmail(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	_, aliceToken := h.onboard(adminToken, "alice", []string{auth.PermSecretsRead})
+
+	var updated profileView
+	h.mustDo(http.MethodPatch, "/api/v1/auth/me", aliceToken, map[string]any{
+		"email": "alice@example.com",
+	}, &updated, http.StatusOK)
+	if updated.Email != "alice@example.com" {
+		t.Fatalf("email was not applied: %s", mustJSON(updated))
+	}
+
+	// An empty address clears it rather than being ignored. Decoded into a
+	// fresh value, since a stale one would mask the field being absent.
+	var cleared profileView
+	h.mustDo(http.MethodPatch, "/api/v1/auth/me", aliceToken, map[string]any{
+		"email": "",
+	}, &cleared, http.StatusOK)
+	if cleared.Email != "" {
+		t.Fatalf("email was not cleared, got %q", cleared.Email)
+	}
+}
+
+// The display name is what other people see in group and user lists, so it is
+// an administrator's to set, not the account holder's.
+func TestUserCannotChangeTheirOwnDisplayName(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	aliceID, aliceToken := h.onboard(adminToken, "alice", []string{auth.PermSecretsRead})
+
+	h.mustDo(http.MethodPatch, "/api/v1/auth/me", aliceToken, map[string]any{
+		"displayName": "Something Else",
+	}, nil, http.StatusBadRequest)
+
+	// An administrator still can.
+	var updated profileView
+	h.mustDo(http.MethodPatch, "/api/v1/users/"+aliceID, adminToken, map[string]any{
+		"displayName": "Alice Bergström",
+	}, &updated, http.StatusOK)
+	if updated.DisplayName != "Alice Bergström" {
+		t.Fatalf("admin could not set the display name: %s", mustJSON(updated))
+	}
+}
+
+func TestProfileEndpointCannotEscalate(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	_, aliceToken := h.onboard(adminToken, "alice", []string{auth.PermSecretsRead})
+
+	// isAdmin and permissions are not fields of this endpoint, so a request
+	// carrying them is refused outright rather than silently ignored.
+	h.mustDo(http.MethodPatch, "/api/v1/auth/me", aliceToken, map[string]any{
+		"isAdmin": true,
+	}, nil, http.StatusBadRequest)
+
+	h.mustDo(http.MethodPatch, "/api/v1/auth/me", aliceToken, map[string]any{
+		"permissions": []string{auth.PermUsersManage},
+	}, nil, http.StatusBadRequest)
+
+	var me struct {
+		User struct {
+			IsAdmin     bool     `json:"isAdmin"`
+			Permissions []string `json:"permissions"`
+		} `json:"user"`
+	}
+	h.mustDo(http.MethodGet, "/api/v1/auth/me", aliceToken, nil, &me, http.StatusOK)
+	if me.User.IsAdmin || len(me.User.Permissions) != 1 {
+		t.Fatalf("alice escalated: %s", mustJSON(me))
+	}
+}
+
+func TestRejectsMalformedEmail(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	h.mustDo(http.MethodPatch, "/api/v1/auth/me", adminToken, map[string]any{
+		"email": "not-an-address",
+	}, nil, http.StatusBadRequest)
+}
+
+func TestAdminCanRenameGroup(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	var group struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/groups", adminToken, map[string]any{
+		"name": "old name", "description": "before",
+	}, &group, http.StatusCreated)
+
+	var renamed struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	h.mustDo(http.MethodPatch, "/api/v1/groups/"+group.ID, adminToken, map[string]any{
+		"name": "new name", "description": "after",
+	}, &renamed, http.StatusOK)
+
+	if renamed.Name != "new name" || renamed.Description != "after" {
+		t.Fatalf("rename did not apply: %s", mustJSON(renamed))
+	}
+
+	// A name already taken by another group is refused.
+	h.mustDo(http.MethodPost, "/api/v1/groups", adminToken, map[string]any{"name": "taken"}, nil, http.StatusCreated)
+	h.mustDo(http.MethodPatch, "/api/v1/groups/"+group.ID, adminToken, map[string]any{
+		"name": "taken",
+	}, nil, http.StatusConflict)
+
+	// Someone with no group rights cannot rename it.
+	_, outsiderToken := h.onboard(adminToken, "outsider", []string{auth.PermSecretsRead})
+	h.mustDo(http.MethodPatch, "/api/v1/groups/"+group.ID, outsiderToken, map[string]any{
+		"name": "hijacked",
+	}, nil, http.StatusForbidden)
+}

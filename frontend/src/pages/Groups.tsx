@@ -179,9 +179,40 @@ function GroupDetail({
   onChanged: () => void
   onDeleted: () => void
 }) {
+  const { isAdmin, can, user: me } = useAuth()
+
   const [addUserId, setAddUserId] = useState('')
   const [addRole, setAddRole] = useState<'member' | 'manager'>('member')
+  const [name, setName] = useState(group.name)
+  const [description, setDescription] = useState(group.description)
+  const [renamed, setRenamed] = useState(false)
+  const [savingName, setSavingName] = useState(false)
   const [error, setError] = useState('')
+
+  // Group managers may rename their own group without holding groups:manage,
+  // and the members list is the reliable way to tell from here.
+  const isManager = (group.members ?? []).some(
+    (member) => member.userId === me?.id && member.role === 'manager',
+  )
+  const canRename = isAdmin || can('groups:manage') || isManager
+  const nameChanged = name.trim() !== group.name || description !== group.description
+
+  async function rename(event: FormEvent) {
+    event.preventDefault()
+    setError('')
+    setRenamed(false)
+    setSavingName(true)
+
+    try {
+      await api.updateGroup(group.id, { name: name.trim(), description })
+      setRenamed(true)
+      onChanged()
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'The group could not be renamed.')
+    } finally {
+      setSavingName(false)
+    }
+  }
 
   const memberIds = new Set((group.members ?? []).map((m) => m.userId))
   const candidates = users.filter((u) => !memberIds.has(u.id) && u.isActive)
@@ -222,6 +253,36 @@ function GroupDetail({
   return (
     <Modal title={group.name} subtitle={group.description || undefined} onClose={onClose}>
       <div className="space-y-5">
+        {canRename && (
+          <form onSubmit={rename} className="space-y-3 border-b border-edge pb-5">
+            <Field label="Group name">
+              <input
+                className="field"
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value)
+                  setRenamed(false)
+                }}
+                required
+              />
+            </Field>
+            <Field label="Description" hint="Optional.">
+              <input
+                className="field"
+                value={description}
+                onChange={(e) => {
+                  setDescription(e.target.value)
+                  setRenamed(false)
+                }}
+              />
+            </Field>
+            {renamed && <Notice kind="ok">Group updated.</Notice>}
+            <button type="submit" className="btn-ghost" disabled={savingName || !nameChanged}>
+              {savingName ? 'Saving…' : 'Save group details'}
+            </button>
+          </form>
+        )}
+
         <div>
           <p className="field-label">Members</p>
           {(group.members ?? []).length === 0 ? (
@@ -287,9 +348,11 @@ function GroupDetail({
 
         <div className="flex items-center justify-between border-t border-edge pt-4">
           <code className="text-muted">{group.id}</code>
-          <button className="btn-danger" onClick={remove}>
-            Delete group
-          </button>
+          {canRename && (
+            <button className="btn-danger" onClick={remove}>
+              Delete group
+            </button>
+          )}
         </div>
       </div>
     </Modal>

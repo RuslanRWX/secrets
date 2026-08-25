@@ -71,6 +71,7 @@ func (s *Server) Routes(corsOrigins []string) http.Handler {
 			// Reachable even while a password change is pending.
 			r.Get("/auth/me", s.handleMe)
 			r.Post("/auth/change-password", s.handleChangePassword)
+			r.Patch("/auth/me", s.handleUpdateProfile)
 			r.Get("/meta/permissions", s.handlePermissionCatalog)
 
 			r.Group(func(r chi.Router) {

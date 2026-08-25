@@ -22,7 +22,8 @@ export function Seal({ id, size = 28, broken = false, className = '' }: SealProp
   const shape = useMemo(() => sealShape(id), [id])
 
   const teeth = Array.from({ length: shape.notches }, (_, i) => (360 / shape.notches) * i)
-  const stamp = broken ? '#5E8C7D' : '#C79A3C'
+  const stampClass = broken ? 'fill-sealed' : 'fill-brass'
+  const toothClass = broken ? 'fill-edge' : 'fill-brass-dim'
 
   return (
     <svg
@@ -33,7 +34,7 @@ export function Seal({ id, size = 28, broken = false, className = '' }: SealProp
       aria-label={`${broken ? 'Open' : 'Sealed'} ${id.slice(0, 8)}`}
       className={className}
     >
-      <circle cx="16" cy="16" r="14" fill="#1D222C" stroke="#2A313E" />
+      <circle cx="16" cy="16" r="14" className="fill-raised stroke-edge" />
 
       {/* A broken seal loses the teeth on its right flank. */}
       {teeth
@@ -46,7 +47,7 @@ export function Seal({ id, size = 28, broken = false, className = '' }: SealProp
             width="1.8"
             height="3"
             rx="0.7"
-            fill={broken ? '#3E4A55' : '#8A6C2A'}
+            className={toothClass}
             transform={`rotate(${angle} 16 16)`}
           />
         ))}
@@ -61,7 +62,7 @@ export function Seal({ id, size = 28, broken = false, className = '' }: SealProp
               width={CELL}
               height={CELL}
               rx="0.8"
-              fill={stamp}
+              className={stampClass}
             />
           ) : null,
         )}

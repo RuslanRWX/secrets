@@ -9,17 +9,87 @@
 @tailwind utilities;
 
 @layer base {
-  html {
+  /*
+   * Night is the default: this is a tool for looking at credentials, often in a
+   * terminal-heavy setup. Day keeps the same brass identity on paper rather
+   * than inverting into a different product.
+   */
+  :root,
+  [data-theme='night'] {
     color-scheme: dark;
+
+    --vault: 14 16 21;
+    --plate: 22 26 34;
+    --raised: 29 34 44;
+    --edge: 42 49 62;
+    --brass: 199 154 60;
+    --brass-bright: 227 184 90;
+    --brass-dim: 138 108 42;
+    --chalk: 232 230 225;
+    --muted: 141 147 161;
+    --sealed: 94 140 125;
+    --breach: 196 87 75;
+
+    --grid: 255 255 255;
+    --grid-alpha: 0.014;
+    /* The scrim behind a dialog always darkens. Tinting it with the surface
+       colour would wash the page out in the day theme instead of dimming it. */
+    --overlay: 8 9 12;
+    --overlay-alpha: 0.78;
+    --plate-shadow: 0 1px 0 0 rgb(255 255 255 / 0.04) inset,
+      0 12px 32px -12px rgb(0 0 0 / 0.8);
+  }
+
+  [data-theme='day'] {
+    color-scheme: light;
+
+    --vault: 239 237 231;
+    --plate: 255 255 255;
+    --raised: 228 225 216;
+    --edge: 207 202 188;
+    /* Brass darkens on paper so it still carries text-level contrast. */
+    --brass: 138 107 34;
+    --brass-bright: 110 85 24;
+    --brass-dim: 179 154 94;
+    --chalk: 26 28 33;
+    --muted: 95 101 112;
+    --sealed: 47 99 84;
+    --breach: 163 58 46;
+
+    --grid: 0 0 0;
+    --grid-alpha: 0.022;
+    --overlay: 44 39 30;
+    --overlay-alpha: 0.45;
+    --plate-shadow: 0 1px 2px 0 rgb(90 80 55 / 0.06),
+      0 8px 24px -16px rgb(60 52 34 / 0.35);
+  }
+
+  /* Text scale. Every measurement in the interface is in rem, so moving the
+     root size moves spacing and type together instead of only the letters. */
+  :root,
+  [data-size='medium'] {
+    font-size: 16px;
+  }
+
+  [data-size='small'] {
+    font-size: 14px;
+  }
+
+  [data-size='large'] {
+    font-size: 18px;
+  }
+
+  [data-size='xlarge'] {
+    font-size: 20px;
   }
 
   body {
     @apply bg-vault text-chalk font-display antialiased;
     /* A faint machined grid, as on the inside face of a strongbox door. */
     background-image:
-      linear-gradient(rgba(255, 255, 255, 0.014) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.014) 1px, transparent 1px);
-    background-size: 44px 44px;
+      linear-gradient(rgb(var(--grid) / var(--grid-alpha)) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--grid) / var(--grid-alpha)) 1px, transparent 1px);
+    background-size: 2.75rem 2.75rem;
   }
 
   :focus-visible {
@@ -40,6 +110,10 @@
 @layer components {
   .panel {
     @apply rounded-lg border border-edge bg-plate shadow-plate;
+  }
+
+  .scrim {
+    background-color: rgb(var(--overlay) / var(--overlay-alpha));
   }
 
   .field-label {
