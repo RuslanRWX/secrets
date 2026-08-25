@@ -170,6 +170,7 @@ export const api = {
       'GET',
       '/auth/me',
     ),
+  updateProfile: (body: { email: string }) => request<User>('PATCH', '/auth/me', body),
   changePassword: (currentPassword: string, newPassword: string) =>
     request<{ status: string }>('POST', '/auth/change-password', { currentPassword, newPassword }),
   permissionCatalog: () =>

@@ -285,7 +285,7 @@ function CreateToken({
               >
                 <input
                   type="checkbox"
-                  className="h-3 w-3 accent-[#C79A3C]"
+                  className="h-3 w-3 accent-brass"
                   checked={scopes.includes(permission)}
                   onChange={(e) =>
                     setScopes(

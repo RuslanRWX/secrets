@@ -52,7 +52,7 @@ export function Modal({ title, subtitle, onClose, children, width = 'max-w-lg' }
   }, [onClose])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-vault/80 p-4 backdrop-blur-sm sm:p-8">
+    <div className="scrim fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 backdrop-blur-sm sm:p-8">
       <div
         ref={ref}
         role="dialog"

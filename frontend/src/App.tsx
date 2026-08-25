@@ -12,6 +12,7 @@ import Groups from './pages/Groups'
 import Users from './pages/Users'
 import Tokens from './pages/Tokens'
 import Audit from './pages/Audit'
+import Settings from './pages/Settings'
 
 /**
  * App resolves three gates in order: is the instance installed, is there a
@@ -92,6 +93,7 @@ export default function App() {
         <Route path="/secrets" element={<Secrets />} />
         <Route path="/groups" element={<Groups />} />
         <Route path="/tokens" element={<Tokens />} />
+        <Route path="/settings" element={<Settings />} />
         {can('users:manage') && <Route path="/users" element={<Users />} />}
         {isAdmin && <Route path="/audit" element={<Audit />} />}
         <Route path="*" element={<Navigate to="/secrets" replace />} />

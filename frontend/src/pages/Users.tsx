@@ -146,7 +146,7 @@ function PermissionPicker({
           >
             <input
               type="checkbox"
-              className="mt-0.5 h-3 w-3 accent-[#C79A3C]"
+              className="mt-0.5 h-3 w-3 accent-brass"
               checked={selected.includes(permission)}
               onChange={(e) =>
                 onChange(
@@ -274,7 +274,7 @@ function CreateUser({ onClose, onSaved }: { onClose: () => void; onSaved: () => 
         <label className="flex cursor-pointer items-center gap-2 text-sm">
           <input
             type="checkbox"
-            className="h-3.5 w-3.5 accent-[#C79A3C]"
+            className="h-3.5 w-3.5 accent-brass"
             checked={isAdmin}
             onChange={(e) => setIsAdmin(e.target.checked)}
           />
@@ -357,7 +357,7 @@ function EditUser({
           <label className="flex cursor-pointer items-center gap-2 text-sm">
             <input
               type="checkbox"
-              className="h-3.5 w-3.5 accent-[#C79A3C]"
+              className="h-3.5 w-3.5 accent-brass"
               checked={isAdmin}
               onChange={(e) => setIsAdmin(e.target.checked)}
             />
@@ -366,7 +366,7 @@ function EditUser({
           <label className="flex cursor-pointer items-center gap-2 text-sm">
             <input
               type="checkbox"
-              className="h-3.5 w-3.5 accent-[#C79A3C]"
+              className="h-3.5 w-3.5 accent-brass"
               checked={isActive}
               onChange={(e) => setIsActive(e.target.checked)}
             />

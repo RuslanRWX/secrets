@@ -41,10 +41,10 @@ export default function Login() {
   return (
     <div className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-4">
       <div className="mb-8 flex items-center gap-3 animate-rise">
-        <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden>
-          <circle cx="16" cy="13" r="5" fill="none" stroke="#C79A3C" strokeWidth="2.5" />
-          <path d="M16 18v7" stroke="#C79A3C" strokeWidth="2.5" strokeLinecap="round" />
-          <path d="M16 22h4" stroke="#C79A3C" strokeWidth="2.5" strokeLinecap="round" />
+        <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden className="text-brass">
+          <circle cx="16" cy="13" r="5" fill="none" stroke="currentColor" strokeWidth="2.5" />
+          <path d="M16 18v7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+          <path d="M16 22h4" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
         </svg>
         <div>
           <h1 className="font-display text-xl font-medium tracking-tight">Secrets</h1>

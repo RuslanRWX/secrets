@@ -28,10 +28,10 @@ export function Layout({ children }: { children: ReactNode }) {
     <div className="flex min-h-screen flex-col lg:flex-row">
       <nav className="flex shrink-0 flex-col gap-1 border-b border-edge bg-plate/60 px-4 py-4 lg:w-56 lg:border-b-0 lg:border-r lg:px-4 lg:py-6">
         <div className="mb-4 flex items-center gap-2.5 px-1">
-          <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden>
-            <circle cx="16" cy="13" r="5" fill="none" stroke="#C79A3C" strokeWidth="2.5" />
-            <path d="M16 18v7" stroke="#C79A3C" strokeWidth="2.5" strokeLinecap="round" />
-            <path d="M16 22h4" stroke="#C79A3C" strokeWidth="2.5" strokeLinecap="round" />
+          <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden className="text-brass">
+            <circle cx="16" cy="13" r="5" fill="none" stroke="currentColor" strokeWidth="2.5" />
+            <path d="M16 18v7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+            <path d="M16 22h4" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
           </svg>
           <span className="font-display text-sm font-bold uppercase tracking-[0.2em] text-chalk">
             Secrets
@@ -70,10 +70,20 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
 
         <div className="mt-auto hidden border-t border-edge pt-4 lg:block">
-          <p className="px-1 text-sm text-chalk">{user?.displayName || user?.username}</p>
-          <p className="px-1 font-mono text-[11px] text-muted">
-            {isAdmin ? 'administrator' : `${user?.permissions.length ?? 0} permissions`}
-          </p>
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              [
+                'block rounded-md px-1 py-1 transition-colors',
+                isActive ? 'text-brass-bright' : 'text-chalk hover:text-brass-bright',
+              ].join(' ')
+            }
+          >
+            <span className="block text-sm">{user?.displayName || user?.username}</span>
+            <span className="block font-mono text-[11px] text-muted">
+              {isAdmin ? 'administrator' : `${user?.permissions.length ?? 0} permissions`}
+            </span>
+          </NavLink>
           <button
             className="btn-ghost mt-3 w-full px-3 py-1.5 text-xs"
             onClick={() => {
@@ -85,15 +95,28 @@ export function Layout({ children }: { children: ReactNode }) {
           </button>
         </div>
 
-        <button
-          className="btn-ghost ml-auto shrink-0 px-3 py-1.5 text-xs lg:hidden"
-          onClick={() => {
-            signOut()
-            navigate('/login')
-          }}
-        >
-          Sign out
-        </button>
+        <div className="ml-auto flex shrink-0 gap-1 lg:hidden">
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              [
+                'rounded-md px-3 py-2 text-sm transition-colors',
+                isActive ? 'bg-raised text-brass-bright' : 'text-muted hover:text-chalk',
+              ].join(' ')
+            }
+          >
+            Settings
+          </NavLink>
+          <button
+            className="btn-ghost px-3 py-1.5 text-xs"
+            onClick={() => {
+              signOut()
+              navigate('/login')
+            }}
+          >
+            Sign out
+          </button>
+        </div>
       </nav>
 
       <main className="min-w-0 flex-1 px-4 py-6 sm:px-8 sm:py-10">

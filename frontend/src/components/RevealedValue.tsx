@@ -45,14 +45,14 @@ export function RevealedValue({ value, onHide }: { value: string; onHide: () => 
           Hide
         </button>
         <svg width="22" height="22" viewBox="0 0 22 22" role="img" aria-label={`Hides in ${remaining} seconds`}>
-          <circle cx="11" cy="11" r="9" fill="none" stroke="#2A313E" strokeWidth="2" />
+          <circle cx="11" cy="11" r="9" fill="none" strokeWidth="2" className="stroke-edge" />
           <circle
             cx="11"
             cy="11"
             r="9"
             fill="none"
-            stroke="#C79A3C"
             strokeWidth="2"
+            className="stroke-brass"
             strokeLinecap="round"
             strokeDasharray={circumference}
             strokeDashoffset={circumference * (1 - progress)}

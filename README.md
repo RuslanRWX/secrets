@@ -82,8 +82,18 @@ of those two rules, and administrators can see everything.
 | `users:manage` | Add, edit and remove users |
 | `audit:read` | Read the audit log |
 
-A group's **manager** can add and remove its members without holding
-`groups:manage`.
+A group's **manager** can add and remove its members, and rename the group,
+without holding `groups:manage`.
+
+## What each person controls
+
+From **Settings**, any signed-in user can change their own password and email
+address, and pick a theme (night, day, or match the system) and a text size.
+Appearance is stored in the browser, so the same account can be set differently
+on a laptop and on a shared screen.
+
+Display name, permissions and the admin flag stay with an administrator: the
+name is how other people recognise the account in group and user lists.
 
 ## Using the API
 
