@@ -50,6 +50,45 @@ To supply your own key instead, pass `--set encryption.masterKey=...`, or point
 the chart at a Secret you manage with `--set encryption.existingSecret=my-keys`
 (it must hold `master-key` and `jwt-secret`).
 
+### Upgrading
+
+One value controls the version of both images:
+
+```yaml
+image:
+  tag: "0.2.0"   # or "latest"
+```
+
+```sh
+# Move to a specific version
+helm upgrade secrets ./helm/secrets --namespace secrets --set image.tag=0.3.0
+
+# Or track the newest build
+helm upgrade secrets ./helm/secrets --namespace secrets --set image.tag=latest
+```
+
+Pinning a version is the right default for production: you decide when the
+change happens, and a `helm upgrade` that changes nothing leaves the running
+pods alone.
+
+`latest` is handled properly rather than being a trap. Kubernetes normally
+ignores a re-pushed tag, because the manifest has not changed and the default
+pull policy serves the cached image. On a moving tag (`latest`, `main`, `edge`,
+`nightly`) the chart sets `imagePullPolicy: Always` and stamps the release
+revision into the pod template, so every `helm upgrade` genuinely rolls the
+deployment and pulls the new build. Set `image.pullPolicy` yourself to override.
+
+Nothing else needs to change: there is no schema migration between releases so
+far, and the master key is carried across upgrades untouched.
+
+To run different versions of the two services, for instance while testing one
+of them, override just that one:
+
+```sh
+helm upgrade secrets ./helm/secrets --namespace secrets \
+  --set image.tag=0.2.0 --set image.ui.tag=latest
+```
+
 The chart bundles a single-replica PostgreSQL for evaluation. For anything real,
 use a managed database:
 
