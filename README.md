@@ -102,9 +102,19 @@ helm install secrets ./helm/secrets --namespace secrets --create-namespace \
 
 ## How access works
 
-A secret has one **owner**, the user who created it. The owner can share it with
-any **group** they belong to, either read-only or read-write. Access is the union
-of those two rules, and administrators can see everything.
+A secret has one **owner**, the person who created it. The owner can share it
+with **individual people** by name, or with a **group** they belong to. Each
+share is read-only or read-write, set per person and per group, so "can change
+the value" is decided one recipient at a time. Access is the union of ownership
+and the shares, and administrators see everything.
+
+Only the owner or an administrator can share a secret. Being able to read one
+does not let you pass it on.
+
+Whoever **creates a group** manages it: they can rename it and add or remove
+members without needing `groups:manage`. That authority follows the creator
+permanently, so being demoted or removed from the membership does not lock them
+out of a group they made. Administrators can see and edit every group.
 
 **Permissions** are granted per user by an administrator:
 
@@ -122,7 +132,7 @@ of those two rules, and administrators can see everything.
 | `audit:read` | Read the audit log |
 
 A group's **manager** can add and remove its members, and rename the group,
-without holding `groups:manage`.
+without holding `groups:manage`. So can whoever created it.
 
 ## What each person controls
 

@@ -86,7 +86,11 @@ func (s *Server) Routes(corsOrigins []string) http.Handler {
 					r.With(requirePermission(auth.PermSecretsUpdate)).Patch("/{id}", s.handleUpdateSecret)
 					r.With(requirePermission(auth.PermSecretsDelete)).Delete("/{id}", s.handleDeleteSecret)
 					r.With(requirePermission(auth.PermSecretsShare)).Post("/{id}/shares", s.handleShareSecret)
-					r.With(requirePermission(auth.PermSecretsShare)).Delete("/{id}/shares/{groupID}", s.handleUnshareSecret)
+					r.With(requirePermission(auth.PermSecretsShare)).Delete("/{id}/shares/groups/{groupID}", s.handleUnshareGroup)
+					r.With(requirePermission(auth.PermSecretsShare)).Delete("/{id}/shares/users/{userID}", s.handleUnshareUser)
+					// The original, group-only revoke path, kept so existing
+					// scripts and tokens do not break.
+					r.With(requirePermission(auth.PermSecretsShare)).Delete("/{id}/shares/{groupID}", s.handleUnshareGroup)
 				})
 
 				r.Route("/groups", func(r chi.Router) {
