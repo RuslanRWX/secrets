@@ -50,6 +50,45 @@ To supply your own key instead, pass `--set encryption.masterKey=...`, or point
 the chart at a Secret you manage with `--set encryption.existingSecret=my-keys`
 (it must hold `master-key` and `jwt-secret`).
 
+### Upgrading
+
+One value controls the version of both images:
+
+```yaml
+image:
+  tag: "0.2.0"   # or "latest"
+```
+
+```sh
+# Move to a specific version
+helm upgrade secrets ./helm/secrets --namespace secrets --set image.tag=0.3.0
+
+# Or track the newest build
+helm upgrade secrets ./helm/secrets --namespace secrets --set image.tag=latest
+```
+
+Pinning a version is the right default for production: you decide when the
+change happens, and a `helm upgrade` that changes nothing leaves the running
+pods alone.
+
+`latest` is handled properly rather than being a trap. Kubernetes normally
+ignores a re-pushed tag, because the manifest has not changed and the default
+pull policy serves the cached image. On a moving tag (`latest`, `main`, `edge`,
+`nightly`) the chart sets `imagePullPolicy: Always` and stamps the release
+revision into the pod template, so every `helm upgrade` genuinely rolls the
+deployment and pulls the new build. Set `image.pullPolicy` yourself to override.
+
+Nothing else needs to change: there is no schema migration between releases so
+far, and the master key is carried across upgrades untouched.
+
+To run different versions of the two services, for instance while testing one
+of them, override just that one:
+
+```sh
+helm upgrade secrets ./helm/secrets --namespace secrets \
+  --set image.tag=0.2.0 --set image.ui.tag=latest
+```
+
 The chart bundles a single-replica PostgreSQL for evaluation. For anything real,
 use a managed database:
 
@@ -63,9 +102,19 @@ helm install secrets ./helm/secrets --namespace secrets --create-namespace \
 
 ## How access works
 
-A secret has one **owner**, the user who created it. The owner can share it with
-any **group** they belong to, either read-only or read-write. Access is the union
-of those two rules, and administrators can see everything.
+A secret has one **owner**, the person who created it. The owner can share it
+with **individual people** by name, or with a **group** they belong to. Each
+share is read-only or read-write, set per person and per group, so "can change
+the value" is decided one recipient at a time. Access is the union of ownership
+and the shares, and administrators see everything.
+
+Only the owner or an administrator can share a secret. Being able to read one
+does not let you pass it on.
+
+Whoever **creates a group** manages it: they can rename it and add or remove
+members without needing `groups:manage`. That authority follows the creator
+permanently, so being demoted or removed from the membership does not lock them
+out of a group they made. Administrators can see and edit every group.
 
 **Permissions** are granted per user by an administrator:
 
@@ -83,7 +132,7 @@ of those two rules, and administrators can see everything.
 | `audit:read` | Read the audit log |
 
 A group's **manager** can add and remove its members, and rename the group,
-without holding `groups:manage`.
+without holding `groups:manage`. So can whoever created it.
 
 ## What each person controls
 

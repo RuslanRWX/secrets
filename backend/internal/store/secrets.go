@@ -20,6 +20,8 @@ const accessClause = `(
 	$1::boolean
 	OR ($2::uuid IS NOT NULL AND (
 	        s.owner_id = $2::uuid
+	     OR EXISTS (SELECT 1 FROM secret_user_shares us
+	                 WHERE us.secret_id = s.id AND us.user_id = $2::uuid)
 	     OR EXISTS (SELECT 1 FROM secret_shares sh
 	                  JOIN group_members m ON m.group_id = sh.group_id
 	                 WHERE sh.secret_id = s.id AND m.user_id = $2::uuid)))
@@ -33,6 +35,8 @@ const writeClause = `(
 	$1::boolean
 	OR ($2::uuid IS NOT NULL AND (
 	        s.owner_id = $2::uuid
+	     OR EXISTS (SELECT 1 FROM secret_user_shares us
+	                 WHERE us.secret_id = s.id AND us.user_id = $2::uuid AND us.can_write)
 	     OR EXISTS (SELECT 1 FROM secret_shares sh
 	                  JOIN group_members m ON m.group_id = sh.group_id
 	                 WHERE sh.secret_id = s.id AND m.user_id = $2::uuid AND sh.can_write)))
@@ -126,8 +130,15 @@ func (s *Store) ListSecrets(ctx context.Context, a Actor) ([]Secret, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	userShares, err := s.userSharesFor(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
 	for i := range out {
 		out[i].Shares = shares[out[i].ID]
+		out[i].UserShares = userShares[out[i].ID]
 	}
 
 	return out, nil
@@ -154,6 +165,12 @@ func (s *Store) SecretByID(ctx context.Context, id uuid.UUID, a Actor) (*Secret,
 		return nil, err
 	}
 	sec.Shares = shares[id]
+
+	userShares, err := s.userSharesFor(ctx, []uuid.UUID{id})
+	if err != nil {
+		return nil, err
+	}
+	sec.UserShares = userShares[id]
 
 	return &sec, nil
 }
@@ -283,6 +300,16 @@ func (s *Store) IsSecretOwner(ctx context.Context, id, userID uuid.UUID) (bool, 
 	return owned, nil
 }
 
+// SecretOwner returns the owner of a secret, or nil when it has none.
+func (s *Store) SecretOwner(ctx context.Context, id uuid.UUID) (*uuid.UUID, error) {
+	var owner *uuid.UUID
+	if err := s.pool.QueryRow(ctx, `SELECT owner_id FROM secrets WHERE id = $1`, id).Scan(&owner); err != nil {
+		return nil, normalize(err)
+	}
+
+	return owner, nil
+}
+
 // ShareSecret grants a group access to a secret.
 func (s *Store) ShareSecret(ctx context.Context, secretID, groupID uuid.UUID, canWrite bool, by uuid.UUID) error {
 	_, err := s.pool.Exec(ctx,
@@ -292,6 +319,62 @@ func (s *Store) ShareSecret(ctx context.Context, secretID, groupID uuid.UUID, ca
 		secretID, groupID, canWrite, by)
 
 	return err
+}
+
+// ShareSecretWithUser grants one person access to a secret.
+func (s *Store) ShareSecretWithUser(ctx context.Context, secretID, userID uuid.UUID, canWrite bool, by uuid.UUID) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO secret_user_shares (secret_id, user_id, can_write, shared_by)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (secret_id, user_id) DO UPDATE SET can_write = EXCLUDED.can_write`,
+		secretID, userID, canWrite, by)
+
+	return err
+}
+
+// UnshareSecretFromUser revokes one person's access.
+func (s *Store) UnshareSecretFromUser(ctx context.Context, secretID, userID uuid.UUID) error {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM secret_user_shares WHERE secret_id = $1 AND user_id = $2`, secretID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}
+
+// userSharesFor loads the direct shares of many secrets in one round trip.
+func (s *Store) userSharesFor(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID][]SecretUserShare, error) {
+	out := map[uuid.UUID][]SecretUserShare{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	rows, err := s.pool.Query(ctx,
+		`SELECT us.secret_id, us.user_id, u.username, u.display_name, us.can_write, us.shared_at
+		   FROM secret_user_shares us
+		   JOIN users u ON u.id = us.user_id
+		  WHERE us.secret_id = ANY($1)
+		  ORDER BY u.username`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var secretID uuid.UUID
+		var sh SecretUserShare
+		if err := rows.Scan(&secretID, &sh.UserID, &sh.Username, &sh.DisplayName,
+			&sh.CanWrite, &sh.SharedAt); err != nil {
+			return nil, err
+		}
+		out[secretID] = append(out[secretID], sh)
+	}
+
+	return out, rows.Err()
 }
 
 // UnshareSecret revokes a group's access.

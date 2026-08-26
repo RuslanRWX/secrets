@@ -33,6 +33,14 @@ export interface SecretShare {
   sharedAt: string
 }
 
+export interface SecretUserShare {
+  userId: string
+  username: string
+  displayName: string
+  canWrite: boolean
+  sharedAt: string
+}
+
 export interface Secret {
   id: string
   name: string
@@ -46,6 +54,7 @@ export interface Secret {
   createdAt: string
   updatedAt: string
   shares?: SecretShare[]
+  userShares?: SecretUserShare[]
   canWrite: boolean
 }
 
@@ -92,6 +101,11 @@ export interface AuditEntry {
   ip: string
   createdAt: string
 }
+
+/** A share names either a group or one person, never both. */
+export type ShareTarget =
+  | { groupId: string; canWrite: boolean }
+  | { userId: string; canWrite: boolean }
 
 /** ApiError carries the machine-readable code so callers can branch on it. */
 export class ApiError extends Error {
@@ -186,17 +200,19 @@ export const api = {
     username?: string
     url?: string
     value: string
-    shareWith?: { groupId: string; canWrite: boolean }[]
+    shareWith?: ShareTarget[]
   }) => request<Secret>('POST', '/secrets', body),
   updateSecret: (
     id: string,
     body: Partial<{ name: string; description: string; username: string; url: string; value: string }>,
   ) => request<Secret>('PATCH', `/secrets/${id}`, body),
   deleteSecret: (id: string) => request<void>('DELETE', `/secrets/${id}`),
-  shareSecret: (id: string, groupId: string, canWrite: boolean) =>
-    request<Secret>('POST', `/secrets/${id}/shares`, { groupId, canWrite }),
-  unshareSecret: (id: string, groupId: string) =>
-    request<void>('DELETE', `/secrets/${id}/shares/${groupId}`),
+  shareSecret: (id: string, target: ShareTarget) =>
+    request<Secret>('POST', `/secrets/${id}/shares`, target),
+  unshareGroup: (id: string, groupId: string) =>
+    request<void>('DELETE', `/secrets/${id}/shares/groups/${groupId}`),
+  unshareUser: (id: string, userId: string) =>
+    request<void>('DELETE', `/secrets/${id}/shares/users/${userId}`),
   secretVersions: (id: string) =>
     request<{ versions: { id: string; version: number; createdAt: string }[] }>(
       'GET',

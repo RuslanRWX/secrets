@@ -46,20 +46,30 @@ type GroupMember struct {
 // Secret is a stored credential. The plaintext value never appears here; it is
 // returned separately by the reveal endpoint.
 type Secret struct {
-	ID          uuid.UUID     `json:"id"`
-	Name        string        `json:"name"`
-	Description string        `json:"description"`
-	Kind        string        `json:"kind"`
-	Username    string        `json:"username"`
-	URL         string        `json:"url"`
-	OwnerID     *uuid.UUID    `json:"ownerId,omitempty"`
-	OwnerName   string        `json:"ownerName,omitempty"`
-	CreatedBy   *uuid.UUID    `json:"createdBy,omitempty"`
-	Version     int           `json:"version"`
-	CreatedAt   time.Time     `json:"createdAt"`
-	UpdatedAt   time.Time     `json:"updatedAt"`
-	Shares      []SecretShare `json:"shares,omitempty"`
-	CanWrite    bool          `json:"canWrite"`
+	ID          uuid.UUID         `json:"id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Kind        string            `json:"kind"`
+	Username    string            `json:"username"`
+	URL         string            `json:"url"`
+	OwnerID     *uuid.UUID        `json:"ownerId,omitempty"`
+	OwnerName   string            `json:"ownerName,omitempty"`
+	CreatedBy   *uuid.UUID        `json:"createdBy,omitempty"`
+	Version     int               `json:"version"`
+	CreatedAt   time.Time         `json:"createdAt"`
+	UpdatedAt   time.Time         `json:"updatedAt"`
+	Shares      []SecretShare     `json:"shares,omitempty"`
+	UserShares  []SecretUserShare `json:"userShares,omitempty"`
+	CanWrite    bool              `json:"canWrite"`
+}
+
+// SecretUserShare grants one named person access to a secret.
+type SecretUserShare struct {
+	UserID      uuid.UUID `json:"userId"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"displayName"`
+	CanWrite    bool      `json:"canWrite"`
+	SharedAt    time.Time `json:"sharedAt"`
 }
 
 // SecretShare grants a group access to a secret.

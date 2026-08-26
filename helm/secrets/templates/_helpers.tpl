@@ -89,3 +89,74 @@ what keeps an upgrade from rotating the key and orphaning every stored secret.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Resolve the tag for one component. Precedence: the component's own tag, then
+the shared image.tag, then the chart's appVersion. Pass the component values as
+"component" and the root context as "root".
+*/}}
+{{- define "secrets.tag" -}}
+{{- .component.tag | default .root.Values.image.tag | default .root.Chart.AppVersion -}}
+{{- end -}}
+
+{{/*
+A moving tag points at different content over time, so it needs pulling on
+every start and a rollout on every upgrade. A pinned version does not.
+*/}}
+{{- define "secrets.isMovingTag" -}}
+{{- if has . (list "latest" "main" "edge" "nightly") -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Pull policy. An explicit setting always wins; otherwise a moving tag is pulled
+every time and a pinned one is cached. Getting this wrong is why "latest"
+usually fails to update anything.
+*/}}
+{{- define "secrets.pullPolicy" -}}
+{{- if .policy -}}
+{{- .policy -}}
+{{- else if include "secrets.isMovingTag" .tag -}}
+Always
+{{- else -}}
+IfNotPresent
+{{- end -}}
+{{- end -}}
+
+{{- define "secrets.apiTag" -}}
+{{- include "secrets.tag" (dict "component" .Values.image.api "root" .) -}}
+{{- end -}}
+
+{{- define "secrets.uiTag" -}}
+{{- include "secrets.tag" (dict "component" .Values.image.ui "root" .) -}}
+{{- end -}}
+
+{{- define "secrets.apiImage" -}}
+{{- printf "%s/%s:%s" .Values.image.registry .Values.image.api.repository (include "secrets.apiTag" .) -}}
+{{- end -}}
+
+{{- define "secrets.uiImage" -}}
+{{- printf "%s/%s:%s" .Values.image.registry .Values.image.ui.repository (include "secrets.uiTag" .) -}}
+{{- end -}}
+
+{{- define "secrets.apiPullPolicy" -}}
+{{- include "secrets.pullPolicy" (dict
+      "policy" (.Values.image.api.pullPolicy | default .Values.image.pullPolicy)
+      "tag" (include "secrets.apiTag" .)) -}}
+{{- end -}}
+
+{{- define "secrets.uiPullPolicy" -}}
+{{- include "secrets.pullPolicy" (dict
+      "policy" (.Values.image.ui.pullPolicy | default .Values.image.pullPolicy)
+      "tag" (include "secrets.uiTag" .)) -}}
+{{- end -}}
+
+{{/*
+On a moving tag, emit the release revision as a pod annotation. Without it a
+`helm upgrade` that changes nothing in the manifest leaves the old pods running
+and the new image is never pulled.
+*/}}
+{{- define "secrets.rolloutAnnotation" -}}
+{{- if include "secrets.isMovingTag" .tag -}}
+rollout/revision: {{ .revision | quote }}
+{{- end -}}
+{{- end -}}

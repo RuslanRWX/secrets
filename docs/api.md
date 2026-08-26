@@ -73,7 +73,8 @@ rather than silently ignored — an account cannot widen its own access here.
 | `PATCH` | `/secrets/{id}` | `secrets:update` |
 | `DELETE` | `/secrets/{id}` | `secrets:delete` |
 | `POST` | `/secrets/{id}/shares` | `secrets:share` |
-| `DELETE` | `/secrets/{id}/shares/{groupId}` | `secrets:share` |
+| `DELETE` | `/secrets/{id}/shares/groups/{groupId}` | `secrets:share` |
+| `DELETE` | `/secrets/{id}/shares/users/{userId}` | `secrets:share` |
 
 Listing and fetching return metadata only. `reveal` is the sole endpoint that
 decrypts, and every call to it is audited.
@@ -92,8 +93,30 @@ curl -X POST https://secrets.example.com/api/v1/secrets \
 ```
 
 `PATCH` with a `value` field replaces the secret and keeps the old one in the
-version history. Sharing is limited to the owner or an administrator, and only
-into groups the sharer belongs to.
+version history.
+
+### Sharing
+
+A share names **either** a group or one person, never both:
+
+```jsonc
+{ "groupId": "…", "canWrite": false }   // everyone in the group
+{ "userId":  "…", "canWrite": true  }   // one person, who may also change it
+```
+
+Posting the same target again updates its `canWrite` setting, so promoting a
+reader to an editor is the same call.
+
+Only the secret's owner or an administrator may share it. Someone who can read a
+secret cannot pass it on. Group shares are additionally limited to groups the
+sharer belongs to, since sharing into a group you cannot see would give away
+access you cannot audit. Naming the owner as a share target is rejected: they
+already hold it.
+
+`GET /secrets/{id}` returns `shares` for groups and `userShares` for people.
+
+`DELETE /secrets/{id}/shares/{groupId}` still works as a group revoke, for
+scripts written before per-user sharing existed.
 
 ## Groups
 

@@ -32,6 +32,7 @@ func (s *Store) ListGroups(ctx context.Context, onlyForUser *uuid.UUID) ([]Group
 		        (SELECT count(*) FROM secret_shares sh WHERE sh.group_id = g.id)
 		   FROM groups g
 		  WHERE $1::uuid IS NULL
+		     OR g.created_by = $1::uuid
 		     OR EXISTS (SELECT 1 FROM group_members m WHERE m.group_id = g.id AND m.user_id = $1)
 		  ORDER BY g.name`, onlyForUser)
 	if err != nil {

@@ -779,8 +779,15 @@ func TestConcurrentMigrationsAreSafe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if applied != 1 {
-		t.Fatalf("expected 1 recorded migration, got %d", applied)
+
+	embedded, err := store.MigrationCount()
+	if err != nil {
+		t.Fatalf("count embedded migrations: %v", err)
+	}
+
+	// Each migration recorded once, no matter how many replicas ran it.
+	if applied != embedded {
+		t.Fatalf("expected %d recorded migrations, got %d", embedded, applied)
 	}
 }
 
@@ -907,4 +914,318 @@ func TestAdminCanRenameGroup(t *testing.T) {
 	h.mustDo(http.MethodPatch, "/api/v1/groups/"+group.ID, outsiderToken, map[string]any{
 		"name": "hijacked",
 	}, nil, http.StatusForbidden)
+}
+
+// --- Direct shares with a person ------------------------------------------
+
+func TestSecretSharedDirectlyWithOneUser(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	sharer := []string{auth.PermSecretsRead, auth.PermSecretsCreate, auth.PermSecretsUpdate, auth.PermSecretsShare}
+	_, aliceToken := h.onboard(adminToken, "alice", sharer)
+	bobID, bobToken := h.onboard(adminToken, "bob", sharer)
+	_, carolToken := h.onboard(adminToken, "carol", sharer)
+
+	var secret struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/secrets", aliceToken, map[string]any{
+		"name": "alice laptop", "value": "alice-laptop-password",
+	}, &secret, http.StatusCreated)
+
+	// No group involved at all: Alice shares straight with Bob.
+	h.mustDo(http.MethodPost, "/api/v1/secrets/"+secret.ID+"/shares", aliceToken, map[string]any{
+		"userId": bobID, "canWrite": false,
+	}, nil, http.StatusOK)
+
+	var revealed struct {
+		Value string `json:"value"`
+	}
+	h.mustDo(http.MethodGet, "/api/v1/secrets/"+secret.ID+"/reveal", bobToken, nil, &revealed, http.StatusOK)
+	if revealed.Value != "alice-laptop-password" {
+		t.Fatalf("bob revealed %q", revealed.Value)
+	}
+
+	// Carol was not named, so she still sees nothing.
+	h.mustDo(http.MethodGet, "/api/v1/secrets/"+secret.ID, carolToken, nil, nil, http.StatusNotFound)
+
+	// Read-only means read-only.
+	h.mustDo(http.MethodPatch, "/api/v1/secrets/"+secret.ID, bobToken, map[string]any{
+		"value": "bob-overwrote-this",
+	}, nil, http.StatusNotFound)
+
+	// The owner can promote the share to write.
+	h.mustDo(http.MethodPost, "/api/v1/secrets/"+secret.ID+"/shares", aliceToken, map[string]any{
+		"userId": bobID, "canWrite": true,
+	}, nil, http.StatusOK)
+	h.mustDo(http.MethodPatch, "/api/v1/secrets/"+secret.ID, bobToken, map[string]any{
+		"value": "bob-rotated-this",
+	}, nil, http.StatusOK)
+
+	h.mustDo(http.MethodGet, "/api/v1/secrets/"+secret.ID+"/reveal", aliceToken, nil, &revealed, http.StatusOK)
+	if revealed.Value != "bob-rotated-this" {
+		t.Fatalf("after bob's write the value is %q", revealed.Value)
+	}
+
+	// Revoking closes it again.
+	h.mustDo(http.MethodDelete, "/api/v1/secrets/"+secret.ID+"/shares/users/"+bobID, aliceToken, nil, nil, http.StatusNoContent)
+	h.mustDo(http.MethodGet, "/api/v1/secrets/"+secret.ID, bobToken, nil, nil, http.StatusNotFound)
+}
+
+func TestSecretListsBothKindsOfShare(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	bobID, _ := h.onboard(adminToken, "bob", []string{auth.PermSecretsRead})
+
+	var group struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/groups", adminToken, map[string]any{"name": "ops"}, &group, http.StatusCreated)
+
+	var secret struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/secrets", adminToken, map[string]any{
+		"name": "mixed", "value": "mixed-share-value",
+		"shareWith": []map[string]any{
+			{"groupId": group.ID, "canWrite": false},
+			{"userId": bobID, "canWrite": true},
+		},
+	}, &secret, http.StatusCreated)
+
+	var view struct {
+		Shares []struct {
+			GroupName string `json:"groupName"`
+		} `json:"shares"`
+		UserShares []struct {
+			Username string `json:"username"`
+			CanWrite bool   `json:"canWrite"`
+		} `json:"userShares"`
+	}
+	h.mustDo(http.MethodGet, "/api/v1/secrets/"+secret.ID, adminToken, nil, &view, http.StatusOK)
+
+	if len(view.Shares) != 1 || view.Shares[0].GroupName != "ops" {
+		t.Fatalf("group share missing: %s", mustJSON(view))
+	}
+	if len(view.UserShares) != 1 || view.UserShares[0].Username != "bob" || !view.UserShares[0].CanWrite {
+		t.Fatalf("user share missing or wrong: %s", mustJSON(view))
+	}
+}
+
+func TestOnlyOwnerOrAdminSharesDirectly(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	sharer := []string{auth.PermSecretsRead, auth.PermSecretsCreate, auth.PermSecretsShare}
+	_, aliceToken := h.onboard(adminToken, "alice", sharer)
+	bobID, bobToken := h.onboard(adminToken, "bob", sharer)
+	carolID, _ := h.onboard(adminToken, "carol", sharer)
+
+	var secret struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/secrets", aliceToken, map[string]any{
+		"name": "alice only", "value": "alice-only-value",
+	}, &secret, http.StatusCreated)
+
+	h.mustDo(http.MethodPost, "/api/v1/secrets/"+secret.ID+"/shares", aliceToken, map[string]any{
+		"userId": bobID,
+	}, nil, http.StatusOK)
+
+	// Bob can read it, but it is not his to pass on.
+	h.mustDo(http.MethodPost, "/api/v1/secrets/"+secret.ID+"/shares", bobToken, map[string]any{
+		"userId": carolID,
+	}, nil, http.StatusForbidden)
+
+	// An administrator may share anything.
+	h.mustDo(http.MethodPost, "/api/v1/secrets/"+secret.ID+"/shares", adminToken, map[string]any{
+		"userId": carolID,
+	}, nil, http.StatusOK)
+}
+
+func TestShareRequestMustNameExactlyOneTarget(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	var group struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/groups", adminToken, map[string]any{"name": "ops"}, &group, http.StatusCreated)
+
+	var secret struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/secrets", adminToken, map[string]any{
+		"name": "target test", "value": "target-test-value",
+	}, &secret, http.StatusCreated)
+
+	var me struct {
+		User struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	h.mustDo(http.MethodGet, "/api/v1/auth/me", adminToken, nil, &me, http.StatusOK)
+
+	// Neither.
+	h.mustDo(http.MethodPost, "/api/v1/secrets/"+secret.ID+"/shares", adminToken,
+		map[string]any{"canWrite": true}, nil, http.StatusBadRequest)
+	// Both.
+	h.mustDo(http.MethodPost, "/api/v1/secrets/"+secret.ID+"/shares", adminToken,
+		map[string]any{"groupId": group.ID, "userId": me.User.ID}, nil, http.StatusBadRequest)
+	// Unknown person.
+	h.mustDo(http.MethodPost, "/api/v1/secrets/"+secret.ID+"/shares", adminToken,
+		map[string]any{"userId": "6f1b8b3e-0000-4000-8000-000000000000"}, nil, http.StatusBadRequest)
+	// The owner already has it.
+	h.mustDo(http.MethodPost, "/api/v1/secrets/"+secret.ID+"/shares", adminToken,
+		map[string]any{"userId": me.User.ID}, nil, http.StatusBadRequest)
+}
+
+// The group-only revoke path predates per-user sharing and must keep working.
+func TestLegacyGroupUnsharePathStillWorks(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	var group struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/groups", adminToken, map[string]any{"name": "ops"}, &group, http.StatusCreated)
+
+	var secret struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/secrets", adminToken, map[string]any{
+		"name": "legacy", "value": "legacy-share-value",
+		"shareWith": []map[string]any{{"groupId": group.ID}},
+	}, &secret, http.StatusCreated)
+
+	h.mustDo(http.MethodDelete, "/api/v1/secrets/"+secret.ID+"/shares/"+group.ID, adminToken, nil, nil, http.StatusNoContent)
+
+	var view struct {
+		Shares []any `json:"shares"`
+	}
+	h.mustDo(http.MethodGet, "/api/v1/secrets/"+secret.ID, adminToken, nil, &view, http.StatusOK)
+	if len(view.Shares) != 0 {
+		t.Fatalf("share survived the legacy revoke: %s", mustJSON(view))
+	}
+}
+
+// --- Group ownership -------------------------------------------------------
+
+func TestGroupCreatorManagesTheirGroup(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	// Only the right to create a group, not to manage every group.
+	_, creatorToken := h.onboard(adminToken, "creator", []string{auth.PermSecretsRead, auth.PermGroupsCreate})
+	otherID, _ := h.onboard(adminToken, "other", []string{auth.PermSecretsRead})
+
+	var group struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/groups", creatorToken, map[string]any{"name": "mine"}, &group, http.StatusCreated)
+
+	h.mustDo(http.MethodPost, "/api/v1/groups/"+group.ID+"/members", creatorToken, map[string]any{
+		"userId": otherID, "role": "member",
+	}, nil, http.StatusOK)
+
+	h.mustDo(http.MethodPatch, "/api/v1/groups/"+group.ID, creatorToken, map[string]any{
+		"name": "still mine",
+	}, nil, http.StatusOK)
+
+	h.mustDo(http.MethodDelete, "/api/v1/groups/"+group.ID+"/members/"+otherID, creatorToken, nil, nil, http.StatusNoContent)
+}
+
+// Being demoted from manager, or dropped from the membership entirely, must not
+// lock the creator out of a group they made.
+func TestGroupCreatorKeepsControlAfterDemotion(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	creatorID, creatorToken := h.onboard(adminToken, "creator", []string{auth.PermSecretsRead, auth.PermGroupsCreate})
+	otherID, _ := h.onboard(adminToken, "other", []string{auth.PermSecretsRead})
+
+	var group struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/groups", creatorToken, map[string]any{"name": "mine"}, &group, http.StatusCreated)
+
+	// An administrator demotes them to an ordinary member.
+	h.mustDo(http.MethodPost, "/api/v1/groups/"+group.ID+"/members", adminToken, map[string]any{
+		"userId": creatorID, "role": "member",
+	}, nil, http.StatusOK)
+
+	h.mustDo(http.MethodPost, "/api/v1/groups/"+group.ID+"/members", creatorToken, map[string]any{
+		"userId": otherID, "role": "member",
+	}, nil, http.StatusOK)
+
+	// And then removes them from the group altogether.
+	h.mustDo(http.MethodDelete, "/api/v1/groups/"+group.ID+"/members/"+creatorID, adminToken, nil, nil, http.StatusNoContent)
+
+	h.mustDo(http.MethodPatch, "/api/v1/groups/"+group.ID, creatorToken, map[string]any{
+		"name": "renamed anyway",
+	}, nil, http.StatusOK)
+
+	// It still appears in their own group list.
+	var list struct {
+		Groups []struct {
+			Name string `json:"name"`
+		} `json:"groups"`
+	}
+	h.mustDo(http.MethodGet, "/api/v1/groups", creatorToken, nil, &list, http.StatusOK)
+	if len(list.Groups) != 1 || list.Groups[0].Name != "renamed anyway" {
+		t.Fatalf("creator lost sight of their group: %s", mustJSON(list))
+	}
+}
+
+// An outsider with no relationship to the group still gets nothing.
+func TestNonMemberCannotManageSomeoneElsesGroup(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	_, creatorToken := h.onboard(adminToken, "creator", []string{auth.PermSecretsRead, auth.PermGroupsCreate})
+	outsiderID, outsiderToken := h.onboard(adminToken, "outsider", []string{auth.PermSecretsRead, auth.PermGroupsCreate})
+
+	var group struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/groups", creatorToken, map[string]any{"name": "theirs"}, &group, http.StatusCreated)
+
+	h.mustDo(http.MethodPost, "/api/v1/groups/"+group.ID+"/members", outsiderToken, map[string]any{
+		"userId": outsiderID, "role": "manager",
+	}, nil, http.StatusForbidden)
+	h.mustDo(http.MethodPatch, "/api/v1/groups/"+group.ID, outsiderToken, map[string]any{
+		"name": "hijacked",
+	}, nil, http.StatusForbidden)
+	h.mustDo(http.MethodGet, "/api/v1/groups/"+group.ID, outsiderToken, nil, nil, http.StatusNotFound)
+}
+
+// The administrator's view is unconditional: every group, editable.
+func TestAdminSeesAndEditsEveryGroup(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	_, creatorToken := h.onboard(adminToken, "creator", []string{auth.PermSecretsRead, auth.PermGroupsCreate})
+
+	var group struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/groups", creatorToken, map[string]any{"name": "not the admins"}, &group, http.StatusCreated)
+
+	var list struct {
+		Groups []struct {
+			ID string `json:"id"`
+		} `json:"groups"`
+	}
+	h.mustDo(http.MethodGet, "/api/v1/groups", adminToken, nil, &list, http.StatusOK)
+	if len(list.Groups) != 1 || list.Groups[0].ID != group.ID {
+		t.Fatalf("admin does not see the group: %s", mustJSON(list))
+	}
+
+	h.mustDo(http.MethodGet, "/api/v1/groups/"+group.ID, adminToken, nil, nil, http.StatusOK)
+	h.mustDo(http.MethodPatch, "/api/v1/groups/"+group.ID, adminToken, map[string]any{
+		"name": "admin renamed it",
+	}, nil, http.StatusOK)
+	h.mustDo(http.MethodDelete, "/api/v1/groups/"+group.ID, adminToken, nil, nil, http.StatusNoContent)
 }

@@ -158,6 +158,25 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return nil
 }
 
+// MigrationCount reports how many migrations are embedded in this build, so a
+// test can assert that each one was recorded exactly once without hardcoding a
+// number that goes stale the moment a migration is added.
+func MigrationCount() (int, error) {
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			count++
+		}
+	}
+
+	return count, nil
+}
+
 // normalize maps pgx's no-rows sentinel onto the package error.
 func normalize(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {

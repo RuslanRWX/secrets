@@ -334,7 +334,10 @@ func (s *Server) handleRemoveGroupMember(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// canManageGroup allows admins, holders of groups:manage, and the group's own managers.
+// canManageGroup allows administrators, holders of groups:manage, the group's
+// managers, and whoever created it. Creation is recorded permanently, so
+// someone cannot be locked out of a group they made by being demoted or
+// removed from its membership.
 func (s *Server) canManageGroup(r *http.Request, p *Principal, groupID uuid.UUID) (bool, error) {
 	if p.IsAdmin && p.Token == nil {
 		return true, nil
@@ -343,15 +346,28 @@ func (s *Server) canManageGroup(r *http.Request, p *Principal, groupID uuid.UUID
 		return false, nil
 	}
 
+	if p.Can(auth.PermGroupsManage) {
+		return true, nil
+	}
+
+	group, err := s.store.GroupByID(r.Context(), groupID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return false, nil
+		}
+
+		return false, err
+	}
+	if group.CreatedBy != nil && *group.CreatedBy == p.User.ID {
+		return true, nil
+	}
+
 	role, err := s.store.GroupRole(r.Context(), groupID, p.User.ID)
 	if err != nil {
 		return false, err
 	}
-	if role == "manager" {
-		return true, nil
-	}
 
-	return p.Can(auth.PermGroupsManage), nil
+	return role == "manager", nil
 }
 
 // canSeeGroup allows anyone who can manage groups, plus the group's own members.
@@ -364,6 +380,11 @@ func (s *Server) canSeeGroup(r *http.Request, p *Principal, groupID uuid.UUID) (
 	}
 	if p.User == nil {
 		return false, nil
+	}
+
+	manages, err := s.canManageGroup(r, p, groupID)
+	if err != nil || manages {
+		return manages, err
 	}
 
 	role, err := s.store.GroupRole(r.Context(), groupID, p.User.ID)

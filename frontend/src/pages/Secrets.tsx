@@ -1,16 +1,25 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { ApiError, api, type Group, type Secret } from '../lib/api'
+import { ApiError, api, type Group, type Secret, type ShareTarget, type User } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { PageHeader } from '../components/Layout'
 import { Seal } from '../components/Seal'
 import { RevealedValue } from '../components/RevealedValue'
 import { Empty, Field, Modal, Notice, Spinner, formatDate } from '../components/ui'
 
+/** shareOverflow counts the shares a row could not fit, across both kinds. */
+function shareOverflow(secret: Secret) {
+  const hiddenGroups = Math.max((secret.shares ?? []).length - 2, 0)
+  const hiddenUsers = Math.max((secret.userShares ?? []).length - 2, 0)
+
+  return hiddenGroups + hiddenUsers
+}
+
 export default function Secrets() {
   const { can, user } = useAuth()
 
   const [secrets, setSecrets] = useState<Secret[]>([])
   const [groups, setGroups] = useState<Group[]>([])
+  const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
@@ -20,9 +29,14 @@ export default function Secrets() {
   const load = useCallback(async () => {
     setError('')
     try {
-      const [secretList, groupList] = await Promise.all([api.listSecrets(), api.listGroups()])
+      const [secretList, groupList, userList] = await Promise.all([
+        api.listSecrets(),
+        api.listGroups(),
+        api.listUsers(),
+      ])
       setSecrets(secretList.secrets)
       setGroups(groupList.groups)
+      setUsers(userList.users)
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'The vault could not be loaded.')
     } finally {
@@ -118,8 +132,14 @@ export default function Secrets() {
                       {share.canWrite && <span className="text-brass">rw</span>}
                     </span>
                   ))}
-                  {(secret.shares ?? []).length > 2 && (
-                    <span className="chip">+{(secret.shares ?? []).length - 2}</span>
+                  {(secret.userShares ?? []).slice(0, 2).map((share) => (
+                    <span key={share.userId} className="chip">
+                      @{share.username}
+                      {share.canWrite && <span className="text-brass">rw</span>}
+                    </span>
+                  ))}
+                  {shareOverflow(secret) > 0 && (
+                    <span className="chip">+{shareOverflow(secret)}</span>
                   )}
                 </span>
 
@@ -133,6 +153,7 @@ export default function Secrets() {
       {adding && (
         <AddSecret
           groups={groups}
+          users={users}
           onClose={() => setAdding(false)}
           onSaved={() => {
             setAdding(false)
@@ -145,6 +166,7 @@ export default function Secrets() {
         <SecretDetail
           secret={selected}
           groups={groups}
+          users={users}
           onClose={() => setSelected(null)}
           onChanged={() => {
             setSelected(null)
@@ -158,14 +180,16 @@ export default function Secrets() {
 
 function AddSecret({
   groups,
+  users,
   onClose,
   onSaved,
 }: {
   groups: Group[]
+  users: User[]
   onClose: () => void
   onSaved: () => void
 }) {
-  const { can } = useAuth()
+  const { can, user: me } = useAuth()
 
   const [name, setName] = useState('')
   const [kind, setKind] = useState<'password' | 'text'>('password')
@@ -173,9 +197,13 @@ function AddSecret({
   const [url, setUrl] = useState('')
   const [description, setDescription] = useState('')
   const [value, setValue] = useState('')
-  const [shareWith, setShareWith] = useState<Record<string, boolean>>({})
+  const [shareGroups, setShareGroups] = useState<Record<string, boolean>>({})
+  const [shareUsers, setShareUsers] = useState<Record<string, boolean>>({})
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+
+  // You always hold your own secret; offering yourself would be noise.
+  const shareableUsers = users.filter((u) => u.isActive && u.id !== me?.id)
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -190,9 +218,14 @@ function AddSecret({
         url,
         description,
         value,
-        shareWith: Object.entries(shareWith)
-          .filter(([, on]) => on)
-          .map(([groupId]) => ({ groupId, canWrite: false })),
+        shareWith: [
+          ...Object.entries(shareGroups)
+            .filter(([, on]) => on)
+            .map(([groupId]): ShareTarget => ({ groupId, canWrite: false })),
+          ...Object.entries(shareUsers)
+            .filter(([, on]) => on)
+            .map(([userId]): ShareTarget => ({ userId, canWrite: false })),
+        ],
       })
       onSaved()
     } catch (caught) {
@@ -262,31 +295,31 @@ function AddSecret({
           />
         </Field>
 
-        {can('secrets:share') && groups.length > 0 && (
-          <fieldset>
-            <legend className="field-label">Share with</legend>
-            <div className="flex flex-wrap gap-2">
-              {groups.map((group) => (
-                <label
-                  key={group.id}
-                  className={[
-                    'cursor-pointer rounded border px-2.5 py-1 text-xs transition-colors',
-                    shareWith[group.id]
-                      ? 'border-brass/50 bg-brass/10 text-brass-bright'
-                      : 'border-edge text-muted hover:border-brass/30',
-                  ].join(' ')}
-                >
-                  <input
-                    type="checkbox"
-                    className="sr-only"
-                    checked={Boolean(shareWith[group.id])}
-                    onChange={(e) => setShareWith({ ...shareWith, [group.id]: e.target.checked })}
-                  />
-                  {group.name}
-                </label>
-              ))}
-            </div>
-          </fieldset>
+        {can('secrets:share') && (groups.length > 0 || shareableUsers.length > 0) && (
+          <div className="space-y-3">
+            {groups.length > 0 && (
+              <ChipPicker
+                legend="Share with groups"
+                items={groups.map((g) => ({ id: g.id, label: g.name }))}
+                selected={shareGroups}
+                onChange={setShareGroups}
+              />
+            )}
+            {shareableUsers.length > 0 && (
+              <ChipPicker
+                legend="Share with people"
+                items={shareableUsers.map((u) => ({
+                  id: u.id,
+                  label: u.displayName || u.username,
+                }))}
+                selected={shareUsers}
+                onChange={setShareUsers}
+              />
+            )}
+            <p className="text-xs text-muted">
+              Everyone added here starts read-only. Grant editing from the secret afterwards.
+            </p>
+          </div>
         )}
 
         {error && <Notice kind="error">{error}</Notice>}
@@ -304,14 +337,225 @@ function AddSecret({
   )
 }
 
+/** ChipPicker is a compact multi-select for a handful of groups or people. */
+function ChipPicker({
+  legend,
+  items,
+  selected,
+  onChange,
+}: {
+  legend: string
+  items: { id: string; label: string }[]
+  selected: Record<string, boolean>
+  onChange: (next: Record<string, boolean>) => void
+}) {
+  return (
+    <fieldset>
+      <legend className="field-label">{legend}</legend>
+      <div className="flex max-h-32 flex-wrap gap-2 overflow-y-auto">
+        {items.map((item) => (
+          <label
+            key={item.id}
+            className={[
+              'cursor-pointer rounded border px-2.5 py-1 text-xs transition-colors',
+              selected[item.id]
+                ? 'border-brass/50 bg-brass/10 text-brass-bright'
+                : 'border-edge text-muted hover:border-brass/30',
+            ].join(' ')}
+          >
+            <input
+              type="checkbox"
+              className="sr-only"
+              checked={Boolean(selected[item.id])}
+              onChange={(e) => onChange({ ...selected, [item.id]: e.target.checked })}
+            />
+            {item.label}
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  )
+}
+
+/**
+ * ShareEditor lists who currently holds a secret and lets the owner add or
+ * remove access. Each entry carries its own read or edit setting, so "can
+ * change the value" is decided per group and per person.
+ */
+function ShareEditor({
+  secret,
+  groups,
+  users,
+  onChanged,
+}: {
+  secret: Secret
+  groups: Group[]
+  users: User[]
+  onChanged: () => void
+}) {
+  const [pending, setPending] = useState('')
+  const [pendingWrite, setPendingWrite] = useState(false)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const groupShares = secret.shares ?? []
+  const userShares = secret.userShares ?? []
+
+  const sharedGroups = new Set(groupShares.map((share) => share.groupId))
+  const sharedUsers = new Set(userShares.map((share) => share.userId))
+
+  const availableGroups = groups.filter((group) => !sharedGroups.has(group.id))
+  const availableUsers = users.filter(
+    (user) => user.isActive && !sharedUsers.has(user.id) && user.id !== secret.ownerId,
+  )
+
+  async function run(action: () => Promise<unknown>) {
+    setError('')
+    setBusy(true)
+    try {
+      await action()
+      onChanged()
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'Sharing could not be changed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function addShare(event: FormEvent) {
+    event.preventDefault()
+    if (!pending) return
+
+    const [kind, id] = pending.split(':')
+    const target: ShareTarget =
+      kind === 'group' ? { groupId: id, canWrite: pendingWrite } : { userId: id, canWrite: pendingWrite }
+
+    void run(async () => {
+      await api.shareSecret(secret.id, target)
+      setPending('')
+      setPendingWrite(false)
+    })
+  }
+
+  const rows = [
+    ...userShares.map((share) => ({
+      key: `user:${share.userId}`,
+      label: share.displayName || share.username,
+      note: `@${share.username}`,
+      canWrite: share.canWrite,
+      setWrite: (canWrite: boolean) =>
+        run(() => api.shareSecret(secret.id, { userId: share.userId, canWrite })),
+      remove: () => run(() => api.unshareUser(secret.id, share.userId)),
+    })),
+    ...groupShares.map((share) => ({
+      key: `group:${share.groupId}`,
+      label: share.groupName,
+      note: 'group',
+      canWrite: share.canWrite,
+      setWrite: (canWrite: boolean) =>
+        run(() => api.shareSecret(secret.id, { groupId: share.groupId, canWrite })),
+      remove: () => run(() => api.unshareGroup(secret.id, share.groupId)),
+    })),
+  ]
+
+  return (
+    <div className="border-t border-edge pt-4">
+      <p className="field-label">Who can see this</p>
+
+      <ul className="mb-3 divide-y divide-edge rounded-md border border-edge">
+        <li className="flex items-center gap-3 px-3 py-2 text-sm">
+          <span className="min-w-0 flex-1 truncate text-chalk">{secret.ownerName || 'You'}</span>
+          <span className="chip">owner</span>
+        </li>
+
+        {rows.map((row) => (
+          <li key={row.key} className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
+            <span className="min-w-0 flex-1 truncate">
+              <span className="text-chalk">{row.label}</span>{' '}
+              <span className="font-mono text-[11px] text-muted">{row.note}</span>
+            </span>
+
+            <label className="flex cursor-pointer items-center gap-1.5 font-mono text-[11px] text-muted">
+              <input
+                type="checkbox"
+                className="h-3 w-3 accent-brass"
+                checked={row.canWrite}
+                disabled={busy}
+                onChange={(e) => row.setWrite(e.target.checked)}
+              />
+              can edit
+            </label>
+
+            <button className="btn-ghost px-2 py-0.5 text-xs" disabled={busy} onClick={row.remove}>
+              Remove
+            </button>
+          </li>
+        ))}
+
+        {rows.length === 0 && (
+          <li className="px-3 py-2 text-sm text-muted">Nobody else. This secret is yours alone.</li>
+        )}
+      </ul>
+
+      {(availableGroups.length > 0 || availableUsers.length > 0) && (
+        <form onSubmit={addShare} className="flex flex-wrap items-end gap-2">
+          <div className="min-w-[12rem] flex-1">
+            <Field label="Share with">
+              <select className="field" value={pending} onChange={(e) => setPending(e.target.value)}>
+                <option value="">Choose a person or group</option>
+                {availableUsers.length > 0 && (
+                  <optgroup label="People">
+                    {availableUsers.map((user) => (
+                      <option key={user.id} value={`user:${user.id}`}>
+                        {user.displayName || user.username}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {availableGroups.length > 0 && (
+                  <optgroup label="Groups">
+                    {availableGroups.map((group) => (
+                      <option key={group.id} value={`group:${group.id}`}>
+                        {group.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            </Field>
+          </div>
+
+          <label className="flex cursor-pointer items-center gap-1.5 py-2 text-xs text-muted">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-brass"
+              checked={pendingWrite}
+              onChange={(e) => setPendingWrite(e.target.checked)}
+            />
+            can edit
+          </label>
+
+          <button type="submit" className="btn-primary" disabled={busy || !pending}>
+            Share
+          </button>
+        </form>
+      )}
+
+      {error && <div className="mt-3"><Notice kind="error">{error}</Notice></div>}
+    </div>
+  )
+}
+
 function SecretDetail({
   secret,
   groups,
+  users,
   onClose,
   onChanged,
 }: {
   secret: Secret
   groups: Group[]
+  users: User[]
   onClose: () => void
   onChanged: () => void
 }) {
@@ -355,15 +599,12 @@ function SecretDetail({
     }
   }
 
-  async function toggleShare(groupId: string, on: boolean, canWrite: boolean) {
-    setError('')
+  // Sharing changes keep the dialog open, so reload just this secret.
+  async function reload() {
     try {
-      const updated = on
-        ? await api.shareSecret(current.id, groupId, canWrite)
-        : await api.unshareSecret(current.id, groupId).then(() => api.getSecret(current.id))
-      setCurrent(updated as Secret)
+      setCurrent(await api.getSecret(current.id))
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'Sharing could not be changed.')
+      setError(caught instanceof ApiError ? caught.message : 'The secret could not be reloaded.')
     }
   }
 
@@ -377,8 +618,6 @@ function SecretDetail({
       setError(caught instanceof ApiError ? caught.message : 'The secret could not be deleted.')
     }
   }
-
-  const shareMap = new Map((current.shares ?? []).map((share) => [share.groupId, share]))
 
   return (
     <Modal title={current.name} subtitle={current.description || undefined} onClose={onClose} width="max-w-2xl">
@@ -455,39 +694,8 @@ function SecretDetail({
           </form>
         )}
 
-        {(isOwner || can('secrets:share')) && groups.length > 0 && (
-          <div className="border-t border-edge pt-4">
-            <p className="field-label">Shared with</p>
-            <ul className="space-y-1.5">
-              {groups.map((group) => {
-                const share = shareMap.get(group.id)
-                return (
-                  <li key={group.id} className="flex items-center gap-3 text-sm">
-                    <label className="flex flex-1 cursor-pointer items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(share)}
-                        onChange={(e) => toggleShare(group.id, e.target.checked, false)}
-                        className="h-3.5 w-3.5 accent-brass"
-                      />
-                      <span className={share ? 'text-chalk' : 'text-muted'}>{group.name}</span>
-                    </label>
-                    {share && (
-                      <label className="flex cursor-pointer items-center gap-1.5 font-mono text-[11px] text-muted">
-                        <input
-                          type="checkbox"
-                          checked={share.canWrite}
-                          onChange={(e) => toggleShare(group.id, true, e.target.checked)}
-                          className="h-3 w-3 accent-brass"
-                        />
-                        can edit
-                      </label>
-                    )}
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
+        {(isOwner || can('secrets:share')) && (
+          <ShareEditor secret={current} groups={groups} users={users} onChanged={reload} />
         )}
 
         {error && <Notice kind="error">{error}</Notice>}

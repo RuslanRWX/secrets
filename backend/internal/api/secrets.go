@@ -42,7 +42,9 @@ type createSecretRequest struct {
 }
 
 type shareRequest struct {
+	// Exactly one of GroupID or UserID identifies who is being given access.
 	GroupID  string `json:"groupId"`
+	UserID   string `json:"userId"`
 	CanWrite bool   `json:"canWrite"`
 }
 
@@ -115,12 +117,8 @@ func (s *Server) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, share := range req.ShareWith {
-		groupID, err := uuid.Parse(share.GroupID)
-		if err != nil {
-			continue
-		}
-		if err := s.shareOne(r, p, secret.ID, groupID, share.CanWrite); err != nil {
-			s.log.Warn("share new secret", "secret", secret.ID, "group", groupID, "error", err)
+		if err := s.applyShare(r, p, secret.ID, share); err != nil {
+			s.log.Warn("share new secret", "secret", secret.ID, "error", err)
 		}
 	}
 
@@ -337,7 +335,7 @@ func (s *Server) handleSecretVersions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"versions": versions})
 }
 
-// handleShareSecret grants a group access to a secret the caller owns.
+// handleShareSecret grants a group or a single person access to a secret.
 func (s *Server) handleShareSecret(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r.Context())
 
@@ -353,28 +351,25 @@ func (s *Server) handleShareSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	groupID, ok := pathUUID(w, req.GroupID)
-	if !ok {
-		return
-	}
-
-	if err := s.shareOne(r, p, id, groupID, req.CanWrite); err != nil {
-		switch {
-		case errors.Is(err, store.ErrNotFound):
-			notFound(w)
-		case errors.Is(err, errNotSecretOwner):
-			forbidden(w, "only the owner or an administrator can share this secret")
-		case errors.Is(err, errNotGroupMember):
-			forbidden(w, "you can only share with groups you belong to")
-		default:
-			s.serverError(w, r, err)
-		}
+	if (req.GroupID == "") == (req.UserID == "") {
+		badRequest(w, "name either a groupId or a userId, not both and not neither")
 
 		return
 	}
 
-	s.audit(r, p, "secret.shared", "secret", id.String(),
-		map[string]any{"groupId": groupID.String(), "canWrite": req.CanWrite})
+	if err := s.applyShare(r, p, id, req); err != nil {
+		s.shareError(w, r, err)
+
+		return
+	}
+
+	detail := map[string]any{"canWrite": req.CanWrite}
+	if req.GroupID != "" {
+		detail["groupId"] = req.GroupID
+	} else {
+		detail["userId"] = req.UserID
+	}
+	s.audit(r, p, "secret.shared", "secret", id.String(), detail)
 
 	secret, err := s.store.SecretByID(r.Context(), id, p.Actor())
 	if err != nil {
@@ -386,13 +381,34 @@ func (s *Server) handleShareSecret(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, secret)
 }
 
+// shareError maps the sharing failures onto responses.
+func (s *Server) shareError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		notFound(w)
+	case errors.Is(err, errNotSecretOwner):
+		forbidden(w, "only the owner or an administrator can share this secret")
+	case errors.Is(err, errNotGroupMember):
+		forbidden(w, "you can only share with groups you belong to")
+	case errors.Is(err, errShareTargetMissing):
+		badRequest(w, "that user or group does not exist")
+	case errors.Is(err, errShareWithOwner):
+		badRequest(w, "this person already owns the secret")
+	default:
+		s.serverError(w, r, err)
+	}
+}
+
 var (
-	errNotSecretOwner = errors.New("not the owner of this secret")
-	errNotGroupMember = errors.New("not a member of this group")
+	errNotSecretOwner     = errors.New("not the owner of this secret")
+	errNotGroupMember     = errors.New("not a member of this group")
+	errShareTargetMissing = errors.New("share target does not exist")
+	errShareWithOwner     = errors.New("cannot share a secret with its own owner")
 )
 
-// shareOne applies one share after checking ownership and group membership.
-func (s *Server) shareOne(r *http.Request, p *Principal, secretID, groupID uuid.UUID, canWrite bool) error {
+// applyShare grants access to one group or one person, after checking that the
+// caller may share this secret at all.
+func (s *Server) applyShare(r *http.Request, p *Principal, secretID uuid.UUID, share shareRequest) error {
 	if p.User == nil {
 		return errNotSecretOwner
 	}
@@ -405,7 +421,42 @@ func (s *Server) shareOne(r *http.Request, p *Principal, secretID, groupID uuid.
 		if !owned {
 			return errNotSecretOwner
 		}
+	}
 
+	if share.UserID != "" {
+		userID, err := uuid.Parse(share.UserID)
+		if err != nil {
+			return errShareTargetMissing
+		}
+
+		target, err := s.store.UserByID(r.Context(), userID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return errShareTargetMissing
+			}
+
+			return err
+		}
+
+		// Sharing with the owner would create a redundant row that the access
+		// rules already cover, and reads as a mistake in the interface.
+		owner, err := s.store.SecretOwner(r.Context(), secretID)
+		if err != nil {
+			return err
+		}
+		if owner != nil && *owner == target.ID {
+			return errShareWithOwner
+		}
+
+		return s.store.ShareSecretWithUser(r.Context(), secretID, userID, share.CanWrite, p.User.ID)
+	}
+
+	groupID, err := uuid.Parse(share.GroupID)
+	if err != nil {
+		return errShareTargetMissing
+	}
+
+	if !p.IsAdmin {
 		// Sharing into a group you are not in would give away access you cannot see.
 		role, err := s.store.GroupRole(r.Context(), groupID, p.User.ID)
 		if err != nil {
@@ -416,18 +467,40 @@ func (s *Server) shareOne(r *http.Request, p *Principal, secretID, groupID uuid.
 		}
 	}
 
-	return s.store.ShareSecret(r.Context(), secretID, groupID, canWrite, p.User.ID)
+	if _, err := s.store.GroupByID(r.Context(), groupID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return errShareTargetMissing
+		}
+
+		return err
+	}
+
+	return s.store.ShareSecret(r.Context(), secretID, groupID, share.CanWrite, p.User.ID)
 }
 
-// handleUnshareSecret revokes a group's access.
-func (s *Server) handleUnshareSecret(w http.ResponseWriter, r *http.Request) {
+// handleUnshareGroup revokes a group's access.
+func (s *Server) handleUnshareGroup(w http.ResponseWriter, r *http.Request) {
+	s.unshare(w, r, "groupID", func(secretID, groupID uuid.UUID) error {
+		return s.store.UnshareSecret(r.Context(), secretID, groupID)
+	})
+}
+
+// handleUnshareUser revokes one person's direct access.
+func (s *Server) handleUnshareUser(w http.ResponseWriter, r *http.Request) {
+	s.unshare(w, r, "userID", func(secretID, userID uuid.UUID) error {
+		return s.store.UnshareSecretFromUser(r.Context(), secretID, userID)
+	})
+}
+
+// unshare holds the permission check both revoke endpoints share.
+func (s *Server) unshare(w http.ResponseWriter, r *http.Request, param string, revoke func(secretID, targetID uuid.UUID) error) {
 	p := principalFrom(r.Context())
 
 	id, ok := pathUUID(w, chi.URLParam(r, "id"))
 	if !ok {
 		return
 	}
-	groupID, ok := pathUUID(w, chi.URLParam(r, "groupID"))
+	targetID, ok := pathUUID(w, chi.URLParam(r, param))
 	if !ok {
 		return
 	}
@@ -457,7 +530,7 @@ func (s *Server) handleUnshareSecret(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.store.UnshareSecret(r.Context(), id, groupID); err != nil {
+	if err := revoke(id, targetID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			notFound(w)
 
@@ -468,7 +541,7 @@ func (s *Server) handleUnshareSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.audit(r, p, "secret.unshared", "secret", id.String(), map[string]any{"groupId": groupID.String()})
+	s.audit(r, p, "secret.unshared", "secret", id.String(), map[string]any{param: targetID.String()})
 
 	w.WriteHeader(http.StatusNoContent)
 }
