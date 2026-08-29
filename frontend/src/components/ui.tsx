@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 /** Panel is the standard raised surface used for cards and forms. */
 export function Panel({ children, className = '' }: { children: ReactNode; className?: string }) {
@@ -73,6 +73,31 @@ export function Modal({ title, subtitle, onClose, children, width = 'max-w-lg' }
       </div>
     </div>
   )
+}
+
+/**
+ * useSavedFlash holds a short confirmation that clears itself, so a change that
+ * has been written to the server says so instead of leaving the screen looking
+ * exactly as it did before the click.
+ */
+export function useSavedFlash(timeout = 3500) {
+  const [message, setMessage] = useState('')
+
+  useEffect(() => {
+    if (!message) return
+
+    const timer = setTimeout(() => setMessage(''), timeout)
+
+    return () => clearTimeout(timer)
+  }, [message, timeout])
+
+  // Re-flashing the same text should restart the countdown, so clear first.
+  const flash = useCallback((next: string) => {
+    setMessage('')
+    setTimeout(() => setMessage(next), 0)
+  }, [])
+
+  return [message, flash] as const
 }
 
 /** Empty is an invitation to act, not a shrug. */

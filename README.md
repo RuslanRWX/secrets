@@ -165,6 +165,12 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 Full endpoint reference: [docs/api.md](docs/api.md).
 
+## Version
+
+The running version is shown under **Settings → About**, for the API and the
+web interface separately, since they are separate images and can drift apart.
+The API also reports it at `/healthz` and `/api/v1/setup/status`.
+
 ## Configuration
 
 The API reads its settings from the environment.

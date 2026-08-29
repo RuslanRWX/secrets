@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { ApiError, api } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import {
@@ -21,6 +21,7 @@ export default function Settings() {
         <EmailAddress />
         <Password />
         <Account />
+        <About />
       </div>
     </>
   )
@@ -253,6 +254,44 @@ function Password() {
           {busy ? 'Saving…' : 'Change password'}
         </button>
       </form>
+    </Section>
+  )
+}
+
+/**
+ * About names what is actually deployed. The API and the interface are separate
+ * images, so a mismatch between them is worth being able to see.
+ */
+function About() {
+  const [instance, setInstance] = useState('')
+  const [apiVersion, setApiVersion] = useState('')
+
+  useEffect(() => {
+    api
+      .setupStatus()
+      .then((status) => {
+        setInstance(status.instanceName)
+        setApiVersion(status.version)
+      })
+      .catch(() => setApiVersion('unavailable'))
+  }, [])
+
+  return (
+    <Section title="About" description="What this deployment is running.">
+      <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
+        <div>
+          <dt className="field-label">Instance</dt>
+          <dd><code className="text-chalk">{instance || '—'}</code></dd>
+        </div>
+        <div>
+          <dt className="field-label">API</dt>
+          <dd><code className="text-chalk">{apiVersion || '…'}</code></dd>
+        </div>
+        <div>
+          <dt className="field-label">Interface</dt>
+          <dd><code className="text-chalk">{__UI_VERSION__}</code></dd>
+        </div>
+      </dl>
     </Section>
   )
 }

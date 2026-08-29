@@ -2,6 +2,9 @@
 
 FROM node:20-alpine AS build
 
+ARG VERSION=dev
+ENV APP_VERSION=$VERSION
+
 WORKDIR /app
 
 COPY package.json package-lock.json ./
