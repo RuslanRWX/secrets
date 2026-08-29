@@ -93,6 +93,7 @@ export function Layout({ children }: { children: ReactNode }) {
           >
             Sign out
           </button>
+          <p className="mt-3 px-1 font-mono text-[10px] text-muted/70">v{__UI_VERSION__}</p>
         </div>
 
         <div className="ml-auto flex shrink-0 gap-1 lg:hidden">

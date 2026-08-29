@@ -42,6 +42,8 @@ services:
     image: ruslanrwx/secrets-ui:${TAG:-latest}
     build:
       context: ./frontend
+      args:
+        VERSION: ${TAG:-dev}
     restart: unless-stopped
     depends_on:
       - api

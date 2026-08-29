@@ -4,7 +4,7 @@ import { useAuth } from '../lib/auth'
 import { PageHeader } from '../components/Layout'
 import { Seal } from '../components/Seal'
 import { RevealedValue } from '../components/RevealedValue'
-import { Empty, Field, Modal, Notice, Spinner, formatDate } from '../components/ui'
+import { Empty, Field, Modal, Notice, Spinner, formatDate, useSavedFlash } from '../components/ui'
 
 /** shareOverflow counts the shares a row could not fit, across both kinds. */
 function shareOverflow(secret: Secret) {
@@ -23,7 +23,7 @@ export default function Secrets() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
-  const [selected, setSelected] = useState<Secret | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
 
   const load = useCallback(async () => {
@@ -47,6 +47,12 @@ export default function Secrets() {
   useEffect(() => {
     void load()
   }, [load])
+
+  // Derived, never copied: the open dialog and the row behind it always agree.
+  const selected = useMemo(
+    () => secrets.find((secret) => secret.id === selectedId) ?? null,
+    [secrets, selectedId],
+  )
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -108,7 +114,7 @@ export default function Secrets() {
           {filtered.map((secret) => (
             <li key={secret.id}>
               <button
-                onClick={() => setSelected(secret)}
+                onClick={() => setSelectedId(secret.id)}
                 className="flex w-full items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-raised/50"
               >
                 <Seal id={secret.id} size={30} className="shrink-0" />
@@ -167,9 +173,10 @@ export default function Secrets() {
           secret={selected}
           groups={groups}
           users={users}
-          onClose={() => setSelected(null)}
-          onChanged={() => {
-            setSelected(null)
+          onClose={() => setSelectedId(null)}
+          onSaved={load}
+          onDeleted={() => {
+            setSelectedId(null)
             void load()
           }}
         />
@@ -391,12 +398,16 @@ function ShareEditor({
   secret: Secret
   groups: Group[]
   users: User[]
-  onChanged: () => void
+  onChanged: (message: string) => Promise<void>
 }) {
   const [pending, setPending] = useState('')
   const [pendingWrite, setPendingWrite] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  // A toggle is controlled by the server value, so without this it would snap
+  // back to the old setting for the length of the round trip and read as a
+  // change that did not take.
+  const [optimistic, setOptimistic] = useState<Record<string, boolean>>({})
 
   const groupShares = secret.shares ?? []
   const userShares = secret.userShares ?? []
@@ -409,16 +420,27 @@ function ShareEditor({
     (user) => user.isActive && !sharedUsers.has(user.id) && user.id !== secret.ownerId,
   )
 
-  async function run(action: () => Promise<unknown>) {
+  async function run(action: () => Promise<unknown>, message: string) {
     setError('')
     setBusy(true)
     try {
       await action()
-      onChanged()
+      await onChanged(message)
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'Sharing could not be changed.')
     } finally {
       setBusy(false)
+      // The reloaded secret is now authoritative again.
+      setOptimistic({})
+    }
+  }
+
+  /** setWrite shows the new setting at once and then persists it. */
+  function setWrite(key: string, persist: (canWrite: boolean) => Promise<unknown>) {
+    return (canWrite: boolean) => {
+      setOptimistic((previous) => ({ ...previous, [key]: canWrite }))
+
+      return run(() => persist(canWrite), canWrite ? 'Editing allowed.' : 'Set to read-only.')
     }
   }
 
@@ -434,7 +456,7 @@ function ShareEditor({
       await api.shareSecret(secret.id, target)
       setPending('')
       setPendingWrite(false)
-    })
+    }, 'Access granted.')
   }
 
   const rows = [
@@ -443,18 +465,20 @@ function ShareEditor({
       label: share.displayName || share.username,
       note: `@${share.username}`,
       canWrite: share.canWrite,
-      setWrite: (canWrite: boolean) =>
-        run(() => api.shareSecret(secret.id, { userId: share.userId, canWrite })),
-      remove: () => run(() => api.unshareUser(secret.id, share.userId)),
+      setWrite: setWrite(`user:${share.userId}`, (canWrite) =>
+        api.shareSecret(secret.id, { userId: share.userId, canWrite }),
+      ),
+      remove: () => run(() => api.unshareUser(secret.id, share.userId), 'Access removed.'),
     })),
     ...groupShares.map((share) => ({
       key: `group:${share.groupId}`,
       label: share.groupName,
       note: 'group',
       canWrite: share.canWrite,
-      setWrite: (canWrite: boolean) =>
-        run(() => api.shareSecret(secret.id, { groupId: share.groupId, canWrite })),
-      remove: () => run(() => api.unshareGroup(secret.id, share.groupId)),
+      setWrite: setWrite(`group:${share.groupId}`, (canWrite) =>
+        api.shareSecret(secret.id, { groupId: share.groupId, canWrite }),
+      ),
+      remove: () => run(() => api.unshareGroup(secret.id, share.groupId), 'Access removed.'),
     })),
   ]
 
@@ -479,7 +503,7 @@ function ShareEditor({
               <input
                 type="checkbox"
                 className="h-3 w-3 accent-brass"
-                checked={row.canWrite}
+                checked={optimistic[row.key] ?? row.canWrite}
                 disabled={busy}
                 onChange={(e) => row.setWrite(e.target.checked)}
               />
@@ -551,30 +575,33 @@ function SecretDetail({
   groups,
   users,
   onClose,
-  onChanged,
+  onSaved,
+  onDeleted,
 }: {
   secret: Secret
   groups: Group[]
   users: User[]
   onClose: () => void
-  onChanged: () => void
+  /** Reloads the list this dialog reads from, leaving the dialog open. */
+  onSaved: () => Promise<void>
+  onDeleted: () => void
 }) {
   const { can, user } = useAuth()
 
-  const [current, setCurrent] = useState(secret)
+  const [saved, flashSaved] = useSavedFlash()
   const [revealed, setRevealed] = useState<string | null>(null)
   const [breaking, setBreaking] = useState(false)
   const [newValue, setNewValue] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const isOwner = current.ownerId === user?.id
+  const isOwner = secret.ownerId === user?.id
 
   async function reveal() {
     setError('')
     setBreaking(true)
     try {
-      const result = await api.revealSecret(current.id)
+      const result = await api.revealSecret(secret.id)
       setRevealed(result.value)
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'The secret could not be decrypted.')
@@ -588,10 +615,11 @@ function SecretDetail({
     setError('')
     setBusy(true)
     try {
-      await api.updateSecret(current.id, { value: newValue })
+      await api.updateSecret(secret.id, { value: newValue })
       setNewValue('')
       setRevealed(null)
-      onChanged()
+      await onSaved()
+      flashSaved('New value saved.')
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'The new value could not be saved.')
     } finally {
@@ -599,32 +627,28 @@ function SecretDetail({
     }
   }
 
-  // Sharing changes keep the dialog open, so reload just this secret.
-  async function reload() {
-    try {
-      setCurrent(await api.getSecret(current.id))
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'The secret could not be reloaded.')
-    }
+  async function handleShared(message: string) {
+    await onSaved()
+    flashSaved(message)
   }
 
   async function remove() {
-    if (!window.confirm(`Delete "${current.name}"? This cannot be undone.`)) return
+    if (!window.confirm(`Delete "${secret.name}"? This cannot be undone.`)) return
     setError('')
     try {
-      await api.deleteSecret(current.id)
-      onChanged()
+      await api.deleteSecret(secret.id)
+      onDeleted()
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'The secret could not be deleted.')
     }
   }
 
   return (
-    <Modal title={current.name} subtitle={current.description || undefined} onClose={onClose} width="max-w-2xl">
+    <Modal title={secret.name} subtitle={secret.description || undefined} onClose={onClose} width="max-w-2xl">
       <div className="space-y-5">
         <div className="flex items-center gap-4 rounded-md border border-edge bg-vault px-4 py-3">
           <Seal
-            id={current.id}
+            id={secret.id}
             size={40}
             broken={revealed !== null}
             className={breaking ? 'animate-seal-break' : ''}
@@ -632,35 +656,35 @@ function SecretDetail({
           <dl className="grid flex-1 grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
             <div>
               <dt className="text-muted">Owner</dt>
-              <dd className="font-mono text-chalk">{current.ownerName || '—'}</dd>
+              <dd className="font-mono text-chalk">{secret.ownerName || '—'}</dd>
             </div>
             <div>
               <dt className="text-muted">Type</dt>
-              <dd className="font-mono text-chalk">{current.kind}</dd>
+              <dd className="font-mono text-chalk">{secret.kind}</dd>
             </div>
             <div>
               <dt className="text-muted">Version</dt>
-              <dd className="font-mono text-chalk">v{current.version}</dd>
+              <dd className="font-mono text-chalk">v{secret.version}</dd>
             </div>
             <div>
               <dt className="text-muted">Updated</dt>
-              <dd className="font-mono text-chalk">{formatDate(current.updatedAt)}</dd>
+              <dd className="font-mono text-chalk">{formatDate(secret.updatedAt)}</dd>
             </div>
           </dl>
         </div>
 
-        {current.username && (
+        {secret.username && (
           <div className="flex items-center gap-3 text-sm">
             <span className="text-muted">Username</span>
-            <code className="text-chalk">{current.username}</code>
+            <code className="text-chalk">{secret.username}</code>
           </div>
         )}
 
-        {current.url && (
+        {secret.url && (
           <div className="flex items-center gap-3 text-sm">
             <span className="text-muted">URL</span>
-            <a href={current.url} target="_blank" rel="noreferrer" className="text-brass hover:underline">
-              {current.url}
+            <a href={secret.url} target="_blank" rel="noreferrer" className="text-brass hover:underline">
+              {secret.url}
             </a>
           </div>
         )}
@@ -676,7 +700,7 @@ function SecretDetail({
           )}
         </div>
 
-        {current.canWrite && can('secrets:update') && (
+        {secret.canWrite && can('secrets:update') && (
           <form onSubmit={rotate} className="space-y-2 border-t border-edge pt-4">
             <Field label="Replace value" hint="The previous value is kept in the version history.">
               <input
@@ -695,14 +719,15 @@ function SecretDetail({
         )}
 
         {(isOwner || can('secrets:share')) && (
-          <ShareEditor secret={current} groups={groups} users={users} onChanged={reload} />
+          <ShareEditor secret={secret} groups={groups} users={users} onChanged={handleShared} />
         )}
 
         {error && <Notice kind="error">{error}</Notice>}
+        {saved && <Notice kind="ok">{saved}</Notice>}
 
         <div className="flex items-center justify-between border-t border-edge pt-4">
-          <code className="text-muted">{current.id}</code>
-          {current.canWrite && can('secrets:delete') && (
+          <code className="text-muted">{secret.id}</code>
+          {secret.canWrite && can('secrets:delete') && (
             <button className="btn-danger" onClick={remove}>
               Delete secret
             </button>
