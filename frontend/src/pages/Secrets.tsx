@@ -693,6 +693,9 @@ function SecretDetail({
   const [revealed, setRevealed] = useState<string | null>(null)
   const [breaking, setBreaking] = useState(false)
   const [newValue, setNewValue] = useState('')
+  const [changingValue, setChangingValue] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmText, setConfirmText] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -719,6 +722,7 @@ function SecretDetail({
     try {
       await api.updateSecret(secret.id, { value: newValue })
       setNewValue('')
+      setChangingValue(false)
       setRevealed(null)
       await onSaved()
       flashSaved('New value saved.')
@@ -734,14 +738,18 @@ function SecretDetail({
     flashSaved(message)
   }
 
-  async function remove() {
-    if (!window.confirm(`Delete "${secret.name}"? This cannot be undone.`)) return
+  async function remove(event: FormEvent) {
+    event.preventDefault()
+    if (confirmText.trim().toLowerCase() !== 'delete') return
+
     setError('')
+    setBusy(true)
     try {
       await api.deleteSecret(secret.id)
       onDeleted()
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'The secret could not be deleted.')
+      setBusy(false)
     }
   }
 
@@ -786,32 +794,58 @@ function SecretDetail({
 
         <div>
           <p className="field-label">Value</p>
-          {revealed === null ? (
-            <button className="btn-ghost w-full justify-center" onClick={reveal}>
-              Reveal value
-            </button>
+
+          {changingValue ? (
+            <form onSubmit={rotate} className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  className="field min-w-[14rem] flex-1 font-mono"
+                  type="password"
+                  value={newValue}
+                  onChange={(e) => setNewValue(e.target.value)}
+                  placeholder="New value"
+                  autoComplete="new-password"
+                  autoFocus
+                />
+                <button type="submit" className="btn-primary px-3 py-1.5 text-xs" disabled={busy || !newValue}>
+                  {busy ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost px-3 py-1.5 text-xs"
+                  onClick={() => {
+                    setNewValue('')
+                    setChangingValue(false)
+                  }}
+                  disabled={busy}
+                >
+                  Cancel
+                </button>
+              </div>
+              <p className="text-xs text-muted">The previous value is kept in the version history.</p>
+            </form>
+          ) : revealed === null ? (
+            <div className="flex gap-2">
+              <button className="btn-ghost flex-1 justify-center" onClick={reveal}>
+                Reveal value
+              </button>
+              {canEdit && (
+                <button className="btn-ghost shrink-0" onClick={() => setChangingValue(true)}>
+                  Change
+                </button>
+              )}
+            </div>
           ) : (
-            <RevealedValue value={revealed} onHide={() => setRevealed(null)} />
+            <div className="space-y-2">
+              <RevealedValue value={revealed} onHide={() => setRevealed(null)} />
+              {canEdit && (
+                <button className="btn-ghost px-2.5 py-1 text-xs" onClick={() => setChangingValue(true)}>
+                  Change value
+                </button>
+              )}
+            </div>
           )}
         </div>
-
-        {canEdit && (
-          <form onSubmit={rotate} className="space-y-2 border-t border-edge pt-4">
-            <Field label="Replace value" hint="The previous value is kept in the version history.">
-              <input
-                className="field font-mono"
-                type="password"
-                value={newValue}
-                onChange={(e) => setNewValue(e.target.value)}
-                placeholder="New value"
-                autoComplete="new-password"
-              />
-            </Field>
-            <button type="submit" className="btn-ghost" disabled={busy || !newValue}>
-              {busy ? 'Saving…' : 'Save new value'}
-            </button>
-          </form>
-        )}
 
         {(isOwner || can('secrets:share')) && (
           <ShareEditor secret={secret} groups={groups} users={users} onChanged={handleShared} />
@@ -820,13 +854,55 @@ function SecretDetail({
         {error && <Notice kind="error">{error}</Notice>}
         {saved && <Notice kind="ok">{saved}</Notice>}
 
-        <div className="flex items-center justify-between border-t border-edge pt-4">
-          <code className="text-muted">{secret.id}</code>
-          {secret.canWrite && can('secrets:delete') && (
-            <button className="btn-danger" onClick={remove}>
-              Delete secret
-            </button>
+        <div className="space-y-3 border-t border-edge pt-4">
+          {confirmDelete && (
+            <form onSubmit={remove} className="rounded-md border border-breach/40 bg-vault p-3">
+              <p className="text-sm text-chalk">
+                Deleting <span className="font-medium">{secret.name}</span> destroys the value and
+                every earlier version of it. There is no way to get it back.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <label className="text-xs text-muted">
+                  Type <code className="text-breach">delete</code> to confirm
+                </label>
+                <input
+                  className="field w-32 font-mono"
+                  value={confirmText}
+                  onChange={(e) => setConfirmText(e.target.value)}
+                  placeholder="delete"
+                  autoComplete="off"
+                  autoFocus
+                />
+                <button
+                  type="submit"
+                  className="btn-danger"
+                  disabled={busy || confirmText.trim().toLowerCase() !== 'delete'}
+                >
+                  {busy ? 'Deleting…' : 'Delete permanently'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => {
+                    setConfirmDelete(false)
+                    setConfirmText('')
+                  }}
+                  disabled={busy}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
           )}
+
+          <div className="flex items-center justify-between">
+            <code className="text-muted">{secret.id}</code>
+            {secret.canWrite && can('secrets:delete') && !confirmDelete && (
+              <button className="btn-danger" onClick={() => setConfirmDelete(true)}>
+                Delete secret
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </Modal>

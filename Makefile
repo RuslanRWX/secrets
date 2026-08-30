@@ -3,7 +3,7 @@ REGISTRY ?= docker.io
 OWNER    ?= ruslanrwx
 API_IMAGE = $(REGISTRY)/$(OWNER)/secrets-api
 UI_IMAGE  = $(REGISTRY)/$(OWNER)/secrets-ui
-VERSION  ?= 0.7.0
+VERSION  ?= 0.8.0
 PLATFORMS ?= linux/amd64,linux/arm64
 
 TEST_DATABASE_URL ?= postgres://secrets:testpass@localhost:55432/secrets_test?sslmode=disable
