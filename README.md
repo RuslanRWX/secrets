@@ -147,8 +147,14 @@ name is how other people recognise the account in group and user lists.
 ## Using the API
 
 Create a token on the **API tokens** page. A token belongs either to a user, in
-which case it acts as that person, or to a group, in which case it can only read
-what is shared with that group. Its scopes are a subset of what the owner holds,
+which case it acts as that person, or to a group, in which case it acts as the
+group and reaches only what is shared with that group — never anything owned
+personally by whoever created it.
+
+Any member of a group can create a token for it. Because a group token has no
+person behind it, it may only carry `secrets:read`, `secrets:update` and
+`secrets:delete`; permissions that presuppose a user are refused. Tokens record
+who minted them, and a group's managers can see and revoke them. Its scopes are a subset of what the owner holds,
 checked on every request: revoking a permission from a user immediately narrows
 every token they issued.
 

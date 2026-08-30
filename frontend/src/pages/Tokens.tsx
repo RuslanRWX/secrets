@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import {
   ApiError,
   api,
+  groupTokenScopes,
   permissionLabels,
   type ApiToken,
   type Group,
@@ -120,7 +121,9 @@ export default function Tokens() {
                 </div>
 
                 <p className="mt-2 font-mono text-[11px] text-muted">
-                  created {formatDate(token.createdAt)} · last used {formatDate(token.lastUsedAt)}
+                  created {formatDate(token.createdAt)}
+                  {token.createdByName && ` by ${token.createdByName}`} · last used{' '}
+                  {formatDate(token.lastUsedAt)}
                   {token.expiresAt && ` · expires ${formatDate(token.expiresAt)}`}
                 </p>
               </li>
@@ -171,10 +174,12 @@ function CreateToken({
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  // A self-issued token can only carry what the caller already holds.
-  const offered: Permission[] = isAdmin
+  // A self-issued token can only carry what the caller already holds, and a
+  // group token is further limited to the permissions a group can act on.
+  const held: Permission[] = isAdmin
     ? (Object.keys(permissionLabels) as Permission[])
     : ownPermissions
+  const offered = bearer === 'group' ? held.filter((p) => groupTokenScopes.includes(p)) : held
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -238,11 +243,17 @@ function CreateToken({
           <select
             className="field"
             value={bearer}
-            onChange={(e) => setBearer(e.target.value as 'self' | 'user' | 'group')}
+            onChange={(e) => {
+              const next = e.target.value as 'self' | 'user' | 'group'
+              setBearer(next)
+              if (next === 'group') {
+                setScopes((current) => current.filter((s) => groupTokenScopes.includes(s)))
+              }
+            }}
           >
             <option value="self">Me</option>
             {isAdmin && <option value="user">Another user</option>}
-            <option value="group">A group — reads only what is shared with it</option>
+            <option value="group">A group you belong to</option>
           </select>
         </Field>
 
@@ -260,7 +271,10 @@ function CreateToken({
         )}
 
         {bearer === 'group' && (
-          <Field label="Group">
+          <Field
+            label="Group"
+            hint="The token reaches only the secrets shared with this group, and nothing that belongs to you personally."
+          >
             <select className="field" value={groupId} onChange={(e) => setGroupId(e.target.value)} required>
               <option value="">Choose a group</option>
               {groups.map((group) => (

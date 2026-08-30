@@ -89,6 +89,8 @@ export interface ApiToken {
   lastUsedAt?: string
   revokedAt?: string
   createdAt: string
+  createdBy?: string
+  createdByName?: string
 }
 
 export interface AuditEntry {
@@ -266,6 +268,14 @@ export const api = {
 
   audit: (limit = 200) => request<{ entries: AuditEntry[] }>('GET', `/audit?limit=${limit}`),
 }
+
+/**
+ * The only scopes a group token may carry. A group token is the group acting,
+ * with no person behind it, so it can reach the secrets shared with the group
+ * and nothing else. The server enforces this; the list is here so the form
+ * never offers a choice that will be refused.
+ */
+export const groupTokenScopes: Permission[] = ['secrets:read', 'secrets:update', 'secrets:delete']
 
 /** Human-readable labels for permission flags, used everywhere they are shown. */
 export const permissionLabels: Record<Permission, string> = {

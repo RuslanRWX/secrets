@@ -89,19 +89,6 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Group tokens are shared machine credentials, so they need either
-		// administrative rights or management of that specific group.
-		allowed, err := s.canManageGroup(r, p, groupID)
-		if err != nil {
-			s.serverError(w, r, err)
-
-			return
-		}
-		if !allowed {
-			forbidden(w, "you must be an administrator or a manager of this group")
-
-			return
-		}
 		if _, err := s.store.GroupByID(r.Context(), groupID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				badRequest(w, "that group does not exist")
@@ -109,6 +96,41 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			s.serverError(w, r, err)
+
+			return
+		}
+
+		// Anyone in the group may mint a credential for it. The token reaches
+		// only what is shared with that group, which every member can already
+		// read, so this hands out no access the minter does not have.
+		belongs, err := s.belongsToGroup(r, p, groupID)
+		if err != nil {
+			s.serverError(w, r, err)
+
+			return
+		}
+		if !belongs {
+			forbidden(w, "you must belong to this group to create a token for it")
+
+			return
+		}
+
+		// A group token is the group acting, with no person behind it, so it
+		// may only carry the permissions that are meaningful for a group.
+		// Without this a group manager could mint themselves powers such as
+		// users:manage that they do not personally hold.
+		for _, scope := range scopes {
+			if !auth.ValidForGroupToken(scope) {
+				badRequest(w, "a group token cannot carry "+scope+
+					"; it may only hold "+strings.Join(auth.GroupTokenScopes, ", "))
+
+				return
+			}
+		}
+
+		// And it can never exceed what the person minting it holds.
+		if !auth.Subset(scopes, effectivePermissions(p.User)) {
+			forbidden(w, "you cannot grant a token scopes beyond your own permissions")
 
 			return
 		}
