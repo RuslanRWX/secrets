@@ -571,112 +571,103 @@ function ShareEditor({
 }
 
 /**
- * SecretDetailsForm edits everything about a secret except its value: the name
- * it is filed under, the account it belongs to, where it is used, and a note.
- * The value has its own form because replacing it keeps a version.
+ * UrlRow shows the URL as a link, the way it has always read, and swaps to a
+ * single input while it is being changed. Saving is a button rather than a bare
+ * Enter press, and the row goes straight back to being a link.
  */
-function SecretDetailsForm({
+function UrlRow({
   secret,
+  canEdit,
   onSaved,
   onFlash,
 }: {
   secret: Secret
+  canEdit: boolean
   onSaved: () => Promise<void>
   onFlash: (message: string) => void
 }) {
-  const [name, setName] = useState(secret.name)
-  const [username, setUsername] = useState(secret.username)
+  const [editing, setEditing] = useState(false)
   const [url, setUrl] = useState(secret.url)
-  const [description, setDescription] = useState(secret.description)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  // A reload replaces the secret this dialog reads from, so take the saved
-  // values as the new starting point rather than leaving stale edits behind.
-  useEffect(() => {
-    setName(secret.name)
-    setUsername(secret.username)
-    setUrl(secret.url)
-    setDescription(secret.description)
-  }, [secret.name, secret.username, secret.url, secret.description])
-
-  const changed =
-    name.trim() !== secret.name ||
-    username !== secret.username ||
-    url !== secret.url ||
-    description !== secret.description
-
-  async function submit(event: FormEvent) {
+  async function save(event: FormEvent) {
     event.preventDefault()
     setError('')
     setBusy(true)
 
     try {
-      await api.updateSecret(secret.id, {
-        name: name.trim(),
-        username,
-        url,
-        description,
-      })
+      await api.updateSecret(secret.id, { url: url.trim() })
       await onSaved()
-      onFlash('Details saved.')
+      onFlash(url.trim() ? 'URL saved.' : 'URL removed.')
+      setEditing(false)
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'The details could not be saved.')
+      setError(caught instanceof ApiError ? caught.message : 'The URL could not be saved.')
     } finally {
       setBusy(false)
     }
   }
 
-  return (
-    <form onSubmit={submit} className="space-y-4 border-t border-edge pt-4">
-      <p className="field-label">Details</p>
+  function cancel() {
+    setUrl(secret.url)
+    setError('')
+    setEditing(false)
+  }
 
-      <Field label="Name">
-        <input className="field" value={name} onChange={(e) => setName(e.target.value)} required />
-      </Field>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Username" hint="The account this password belongs to.">
-          <input className="field" value={username} onChange={(e) => setUsername(e.target.value)} />
-        </Field>
-
-        <Field label="URL" hint="Where it is used. Include https://.">
+  if (editing) {
+    return (
+      <form onSubmit={save} className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="w-20 shrink-0 text-muted">URL</span>
           <input
-            className="field"
+            className="field min-w-[14rem] flex-1"
             type="url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="https://example.com"
+            autoFocus
           />
-        </Field>
-      </div>
+          <button type="submit" className="btn-primary px-3 py-1.5 text-xs" disabled={busy}>
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+          <button type="button" className="btn-ghost px-3 py-1.5 text-xs" onClick={cancel} disabled={busy}>
+            Cancel
+          </button>
+        </div>
+        {error && <Notice kind="error">{error}</Notice>}
+      </form>
+    )
+  }
 
-      <Field label="Note" hint="Never put the secret itself here.">
-        <input
-          className="field"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
-      </Field>
-
-      {error && <Notice kind="error">{error}</Notice>}
-
-      <div className="flex items-center gap-3">
-        <button type="submit" className="btn-ghost" disabled={busy || !changed}>
-          {busy ? 'Saving…' : 'Save details'}
+  if (!secret.url) {
+    // Nothing to show unless there is something the reader could do about it.
+    return canEdit ? (
+      <div className="flex items-center gap-3 text-sm">
+        <span className="w-20 shrink-0 text-muted">URL</span>
+        <button className="btn-ghost px-2.5 py-1 text-xs" onClick={() => setEditing(true)}>
+          Add URL
         </button>
-        {secret.url && (
-          <a
-            href={secret.url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs text-brass hover:underline"
-          >
-            Open {secret.url}
-          </a>
-        )}
       </div>
-    </form>
+    ) : null
+  }
+
+  return (
+    <div className="flex items-center gap-3 text-sm">
+      <span className="w-20 shrink-0 text-muted">URL</span>
+      <a
+        href={secret.url}
+        target="_blank"
+        rel="noreferrer"
+        className="min-w-0 truncate text-brass hover:underline"
+      >
+        {secret.url}
+      </a>
+      {canEdit && (
+        <button className="btn-ghost shrink-0 px-2.5 py-1 text-xs" onClick={() => setEditing(true)}>
+          Edit
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -784,27 +775,14 @@ function SecretDetail({
           </dl>
         </div>
 
-        {canEdit ? (
-          <SecretDetailsForm secret={secret} onSaved={onSaved} onFlash={flashSaved} />
-        ) : (
-          <>
-            {secret.username && (
-              <div className="flex items-center gap-3 text-sm">
-                <span className="text-muted">Username</span>
-                <code className="text-chalk">{secret.username}</code>
-              </div>
-            )}
-
-            {secret.url && (
-              <div className="flex items-center gap-3 text-sm">
-                <span className="text-muted">URL</span>
-                <a href={secret.url} target="_blank" rel="noreferrer" className="text-brass hover:underline">
-                  {secret.url}
-                </a>
-              </div>
-            )}
-          </>
+        {secret.username && (
+          <div className="flex items-center gap-3 text-sm">
+            <span className="w-20 shrink-0 text-muted">Username</span>
+            <code className="text-chalk">{secret.username}</code>
+          </div>
         )}
+
+        <UrlRow secret={secret} canEdit={canEdit} onSaved={onSaved} onFlash={flashSaved} />
 
         <div>
           <p className="field-label">Value</p>
