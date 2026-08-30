@@ -43,3 +43,24 @@ func TestDefaultsAreValid(t *testing.T) {
 		}
 	}
 }
+
+// A group token acts as the group itself, so it must never be able to carry a
+// permission that only makes sense for a person.
+func TestGroupTokenScopesExcludeUserOnlyPowers(t *testing.T) {
+	forbidden := []string{
+		PermUsersManage, PermGroupsCreate, PermGroupsManage,
+		PermTokensCreate, PermAuditRead, PermSecretsCreate, PermSecretsShare,
+	}
+
+	for _, permission := range forbidden {
+		if ValidForGroupToken(permission) {
+			t.Errorf("%q must not be grantable to a group token", permission)
+		}
+	}
+
+	for _, permission := range GroupTokenScopes {
+		if !Valid(permission) {
+			t.Errorf("%q is not in the permission catalog", permission)
+		}
+	}
+}

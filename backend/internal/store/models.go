@@ -90,18 +90,20 @@ type SecretVersion struct {
 
 // APIToken is a bearer credential for programmatic access.
 type APIToken struct {
-	ID         uuid.UUID  `json:"id"`
-	Name       string     `json:"name"`
-	Prefix     string     `json:"prefix"`
-	UserID     *uuid.UUID `json:"userId,omitempty"`
-	Username   string     `json:"username,omitempty"`
-	GroupID    *uuid.UUID `json:"groupId,omitempty"`
-	GroupName  string     `json:"groupName,omitempty"`
-	Scopes     []string   `json:"scopes"`
-	ExpiresAt  *time.Time `json:"expiresAt,omitempty"`
-	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
-	RevokedAt  *time.Time `json:"revokedAt,omitempty"`
-	CreatedAt  time.Time  `json:"createdAt"`
+	ID            uuid.UUID  `json:"id"`
+	Name          string     `json:"name"`
+	Prefix        string     `json:"prefix"`
+	UserID        *uuid.UUID `json:"userId,omitempty"`
+	Username      string     `json:"username,omitempty"`
+	GroupID       *uuid.UUID `json:"groupId,omitempty"`
+	GroupName     string     `json:"groupName,omitempty"`
+	Scopes        []string   `json:"scopes"`
+	ExpiresAt     *time.Time `json:"expiresAt,omitempty"`
+	LastUsedAt    *time.Time `json:"lastUsedAt,omitempty"`
+	RevokedAt     *time.Time `json:"revokedAt,omitempty"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	CreatedBy     *uuid.UUID `json:"createdBy,omitempty"`
+	CreatedByName string     `json:"createdByName,omitempty"`
 }
 
 // AuditEntry records a security-relevant action.

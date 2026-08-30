@@ -1229,3 +1229,165 @@ func TestAdminSeesAndEditsEveryGroup(t *testing.T) {
 	}, nil, http.StatusOK)
 	h.mustDo(http.MethodDelete, "/api/v1/groups/"+group.ID, adminToken, nil, nil, http.StatusNoContent)
 }
+
+// --- Group tokens ----------------------------------------------------------
+
+// A group token is a credential for the group, reaching only what is shared
+// with it. Any member may mint one, because every member can already read
+// exactly that.
+func TestGroupMemberCanCreateGroupToken(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	perms := []string{auth.PermSecretsRead, auth.PermSecretsCreate, auth.PermGroupsCreate, auth.PermTokensCreate}
+	_, ownerToken := h.onboard(adminToken, "owner", perms)
+	memberID, memberToken := h.onboard(adminToken, "member", perms)
+	_, outsiderToken := h.onboard(adminToken, "outsider", perms)
+
+	var group struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/groups", ownerToken, map[string]any{"name": "team"}, &group, http.StatusCreated)
+	h.mustDo(http.MethodPost, "/api/v1/groups/"+group.ID+"/members", ownerToken,
+		map[string]any{"userId": memberID, "role": "member"}, nil, http.StatusOK)
+
+	// A shared secret for the token to reach, and one the group cannot see.
+	var shared, private struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/secrets", ownerToken, map[string]any{
+		"name": "shared with team", "value": "team-shared-value",
+		"shareWith": []map[string]any{{"groupId": group.ID}},
+	}, &shared, http.StatusCreated)
+	h.mustDo(http.MethodPost, "/api/v1/secrets", ownerToken, map[string]any{
+		"name": "not shared", "value": "owner-only-value",
+	}, &private, http.StatusCreated)
+
+	// An ordinary member mints the credential.
+	var minted struct {
+		Plaintext string `json:"plaintext"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/tokens", memberToken, map[string]any{
+		"name": "team runner", "groupId": group.ID, "scopes": []string{auth.PermSecretsRead},
+	}, &minted, http.StatusCreated)
+
+	// It reaches the group's secrets and nothing else.
+	var list struct {
+		Secrets []struct {
+			ID string `json:"id"`
+		} `json:"secrets"`
+	}
+	h.mustDo(http.MethodGet, "/api/v1/secrets", minted.Plaintext, nil, &list, http.StatusOK)
+	if len(list.Secrets) != 1 || list.Secrets[0].ID != shared.ID {
+		t.Fatalf("group token sees the wrong set: %s", mustJSON(list))
+	}
+	h.mustDo(http.MethodGet, "/api/v1/secrets/"+private.ID+"/reveal", minted.Plaintext, nil, nil, http.StatusNotFound)
+
+	// Somebody outside the group cannot mint one for it.
+	h.mustDo(http.MethodPost, "/api/v1/tokens", outsiderToken, map[string]any{
+		"name": "not mine", "groupId": group.ID, "scopes": []string{auth.PermSecretsRead},
+	}, nil, http.StatusForbidden)
+}
+
+// Without a scope allowlist, anyone able to create a group could mint a group
+// token carrying users:manage and then administer the installation with it.
+func TestGroupTokenCannotCarryUserOnlyPermissions(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	_, ownerToken := h.onboard(adminToken, "owner",
+		[]string{auth.PermSecretsRead, auth.PermGroupsCreate, auth.PermTokensCreate})
+
+	var group struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/groups", ownerToken, map[string]any{"name": "team"}, &group, http.StatusCreated)
+
+	for _, scope := range []string{
+		auth.PermUsersManage, auth.PermGroupsManage, auth.PermGroupsCreate,
+		auth.PermTokensCreate, auth.PermAuditRead, auth.PermSecretsCreate, auth.PermSecretsShare,
+	} {
+		h.mustDo(http.MethodPost, "/api/v1/tokens", ownerToken, map[string]any{
+			"name": "escalate", "groupId": group.ID, "scopes": []string{scope},
+		}, nil, http.StatusBadRequest)
+	}
+
+	// Even an administrator cannot put a user-only power on a group identity.
+	h.mustDo(http.MethodPost, "/api/v1/tokens", adminToken, map[string]any{
+		"name": "escalate", "groupId": group.ID, "scopes": []string{auth.PermUsersManage},
+	}, nil, http.StatusBadRequest)
+}
+
+// A group token must not exceed the person who minted it either.
+func TestGroupTokenCannotExceedItsMinter(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	// Read-only, so they may not hand out the right to change a value.
+	_, readerToken := h.onboard(adminToken, "reader",
+		[]string{auth.PermSecretsRead, auth.PermGroupsCreate, auth.PermTokensCreate})
+
+	var group struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/groups", readerToken, map[string]any{"name": "team"}, &group, http.StatusCreated)
+
+	h.mustDo(http.MethodPost, "/api/v1/tokens", readerToken, map[string]any{
+		"name": "too broad", "groupId": group.ID, "scopes": []string{auth.PermSecretsUpdate},
+	}, nil, http.StatusForbidden)
+
+	h.mustDo(http.MethodPost, "/api/v1/tokens", readerToken, map[string]any{
+		"name": "fine", "groupId": group.ID, "scopes": []string{auth.PermSecretsRead},
+	}, nil, http.StatusCreated)
+}
+
+// Whoever mints a group token can see it listed and revoke it again.
+func TestGroupTokenIsVisibleAndRevocableByItsCreator(t *testing.T) {
+	h := newHarness(t)
+	adminToken := h.setupAdmin()
+
+	perms := []string{auth.PermSecretsRead, auth.PermGroupsCreate, auth.PermTokensCreate}
+	_, ownerToken := h.onboard(adminToken, "owner", perms)
+	memberID, memberToken := h.onboard(adminToken, "member", perms)
+
+	var group struct {
+		ID string `json:"id"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/groups", ownerToken, map[string]any{"name": "team"}, &group, http.StatusCreated)
+	h.mustDo(http.MethodPost, "/api/v1/groups/"+group.ID+"/members", ownerToken,
+		map[string]any{"userId": memberID, "role": "member"}, nil, http.StatusOK)
+
+	var minted struct {
+		Plaintext string `json:"plaintext"`
+		Token     struct {
+			ID string `json:"id"`
+		} `json:"token"`
+	}
+	h.mustDo(http.MethodPost, "/api/v1/tokens", memberToken, map[string]any{
+		"name": "team runner", "groupId": group.ID, "scopes": []string{auth.PermSecretsRead},
+	}, &minted, http.StatusCreated)
+
+	var list struct {
+		Tokens []struct {
+			ID            string `json:"id"`
+			GroupName     string `json:"groupName"`
+			CreatedByName string `json:"createdByName"`
+		} `json:"tokens"`
+	}
+	h.mustDo(http.MethodGet, "/api/v1/tokens", memberToken, nil, &list, http.StatusOK)
+	if len(list.Tokens) != 1 || list.Tokens[0].GroupName != "team" {
+		t.Fatalf("creator cannot see their own group token: %s", mustJSON(list))
+	}
+	if list.Tokens[0].CreatedByName != "member" {
+		t.Fatalf("token does not record who minted it: %s", mustJSON(list))
+	}
+
+	// The group's manager sees it too, which is the accountability trail.
+	h.mustDo(http.MethodGet, "/api/v1/tokens", ownerToken, nil, &list, http.StatusOK)
+	if len(list.Tokens) != 1 {
+		t.Fatalf("group manager cannot see the group's token: %s", mustJSON(list))
+	}
+
+	h.mustDo(http.MethodDelete, "/api/v1/tokens/"+minted.Token.ID, memberToken, nil, nil, http.StatusNoContent)
+	h.mustDo(http.MethodGet, "/api/v1/secrets", minted.Plaintext, nil, nil, http.StatusUnauthorized)
+}

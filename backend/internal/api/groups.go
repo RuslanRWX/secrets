@@ -370,6 +370,22 @@ func (s *Server) canManageGroup(r *http.Request, p *Principal, groupID uuid.UUID
 	return role == "manager", nil
 }
 
+// belongsToGroup reports whether the caller is in the group, manages it, or is
+// an administrator. It is the test for acting on behalf of a group.
+func (s *Server) belongsToGroup(r *http.Request, p *Principal, groupID uuid.UUID) (bool, error) {
+	manages, err := s.canManageGroup(r, p, groupID)
+	if err != nil || manages {
+		return manages, err
+	}
+	if p.User == nil {
+		return false, nil
+	}
+
+	role, err := s.store.GroupRole(r.Context(), groupID, p.User.ID)
+
+	return role != "", err
+}
+
 // canSeeGroup allows anyone who can manage groups, plus the group's own members.
 func (s *Server) canSeeGroup(r *http.Request, p *Principal, groupID uuid.UUID) (bool, error) {
 	if p.IsAdmin || p.Can(auth.PermGroupsManage) || p.Can(auth.PermUsersManage) {

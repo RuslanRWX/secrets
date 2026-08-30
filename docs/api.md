@@ -159,9 +159,27 @@ curl -X POST https://secrets.example.com/api/v1/tokens \
   -d '{"name":"deploy-pipeline","scopes":["secrets:read"],"expiresInDays":90}'
 ```
 
-The response carries `plaintext` once and never again. Supply `groupId` instead
-of `userId` for a machine credential scoped to a group; a group token can read
-what is shared with that group and cannot create anything.
+The response carries `plaintext` once and never again.
+
+### Group tokens
+
+Supply `groupId` instead of `userId` for a credential that acts as the group
+rather than as a person. It reaches the secrets shared with that group and
+nothing else, in particular nothing owned personally by whoever minted it.
+
+Any member of the group may create one, since every member can already read
+exactly what the token will reach. Two limits apply:
+
+- **Scopes are restricted to `secrets:read`, `secrets:update` and
+  `secrets:delete`.** A group token has no user behind it, so permissions that
+  presuppose a person — `users:manage`, `groups:manage`, `tokens:create`,
+  `audit:read`, `secrets:create`, `secrets:share` — are refused with `400`, for
+  administrators too.
+- **It can never exceed the person who minted it**, so a read-only member
+  cannot issue a token that changes values.
+
+Tokens record who created them. A group's token is visible to, and revocable
+by, its creator, the group's managers, its creator-owner, and administrators.
 
 `expiresInDays` of `0` means the token never expires.
 

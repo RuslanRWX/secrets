@@ -9,16 +9,18 @@ import (
 
 const tokenColumns = `t.id, t.name, t.prefix, t.user_id, COALESCE(u.username, ''),
 	t.group_id, COALESCE(g.name, ''), t.scopes, t.expires_at, t.last_used_at,
-	t.revoked_at, t.created_at`
+	t.revoked_at, t.created_at, t.created_by, COALESCE(c.username, '')`
 
 const tokenFrom = ` FROM api_tokens t
 	LEFT JOIN users u ON u.id = t.user_id
-	LEFT JOIN groups g ON g.id = t.group_id`
+	LEFT JOIN groups g ON g.id = t.group_id
+	LEFT JOIN users c ON c.id = t.created_by`
 
 func scanToken(row interface{ Scan(...any) error }) (*APIToken, error) {
 	var t APIToken
 	err := row.Scan(&t.ID, &t.Name, &t.Prefix, &t.UserID, &t.Username, &t.GroupID,
-		&t.GroupName, &t.Scopes, &t.ExpiresAt, &t.LastUsedAt, &t.RevokedAt, &t.CreatedAt)
+		&t.GroupName, &t.Scopes, &t.ExpiresAt, &t.LastUsedAt, &t.RevokedAt, &t.CreatedAt,
+		&t.CreatedBy, &t.CreatedByName)
 	if err != nil {
 		return nil, normalize(err)
 	}
@@ -64,7 +66,8 @@ func (s *Store) TokenByPrefix(ctx context.Context, prefix string) (*APIToken, []
 	err := s.pool.QueryRow(ctx,
 		`SELECT `+tokenColumns+`, t.token_hash`+tokenFrom+` WHERE t.prefix = $1`, prefix,
 	).Scan(&t.ID, &t.Name, &t.Prefix, &t.UserID, &t.Username, &t.GroupID, &t.GroupName,
-		&t.Scopes, &t.ExpiresAt, &t.LastUsedAt, &t.RevokedAt, &t.CreatedAt, &hash)
+		&t.Scopes, &t.ExpiresAt, &t.LastUsedAt, &t.RevokedAt, &t.CreatedAt,
+		&t.CreatedBy, &t.CreatedByName, &hash)
 	if err != nil {
 		return nil, nil, normalize(err)
 	}
@@ -76,8 +79,12 @@ func (s *Store) TokenByPrefix(ctx context.Context, prefix string) (*APIToken, []
 func (s *Store) ListTokens(ctx context.Context, forUser *uuid.UUID) ([]APIToken, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+tokenColumns+tokenFrom+`
-		  WHERE $1::uuid IS NULL OR t.user_id = $1::uuid
-		     OR t.group_id IN (SELECT group_id FROM group_members WHERE user_id = $1::uuid AND role = 'manager')
+		  WHERE $1::uuid IS NULL
+		     OR t.user_id = $1::uuid
+		     OR t.created_by = $1::uuid
+		     OR t.group_id IN (SELECT group_id FROM group_members
+		                        WHERE user_id = $1::uuid AND role = 'manager')
+		     OR t.group_id IN (SELECT id FROM groups WHERE created_by = $1::uuid)
 		  ORDER BY t.created_at DESC`, forUser)
 	if err != nil {
 		return nil, err
@@ -100,7 +107,13 @@ func (s *Store) ListTokens(ctx context.Context, forUser *uuid.UUID) ([]APIToken,
 func (s *Store) RevokeToken(ctx context.Context, id uuid.UUID, forUser *uuid.UUID) error {
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE api_tokens SET revoked_at = now()
-		  WHERE id = $1 AND revoked_at IS NULL AND ($2::uuid IS NULL OR user_id = $2::uuid)`,
+		  WHERE id = $1 AND revoked_at IS NULL
+		    AND ($2::uuid IS NULL
+		      OR user_id = $2::uuid
+		      OR created_by = $2::uuid
+		      OR group_id IN (SELECT group_id FROM group_members
+		                       WHERE user_id = $2::uuid AND role = 'manager')
+		      OR group_id IN (SELECT id FROM groups WHERE created_by = $2::uuid))`,
 		id, forUser)
 	if err != nil {
 		return err
