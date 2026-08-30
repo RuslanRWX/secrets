@@ -570,6 +570,116 @@ function ShareEditor({
   )
 }
 
+/**
+ * SecretDetailsForm edits everything about a secret except its value: the name
+ * it is filed under, the account it belongs to, where it is used, and a note.
+ * The value has its own form because replacing it keeps a version.
+ */
+function SecretDetailsForm({
+  secret,
+  onSaved,
+  onFlash,
+}: {
+  secret: Secret
+  onSaved: () => Promise<void>
+  onFlash: (message: string) => void
+}) {
+  const [name, setName] = useState(secret.name)
+  const [username, setUsername] = useState(secret.username)
+  const [url, setUrl] = useState(secret.url)
+  const [description, setDescription] = useState(secret.description)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  // A reload replaces the secret this dialog reads from, so take the saved
+  // values as the new starting point rather than leaving stale edits behind.
+  useEffect(() => {
+    setName(secret.name)
+    setUsername(secret.username)
+    setUrl(secret.url)
+    setDescription(secret.description)
+  }, [secret.name, secret.username, secret.url, secret.description])
+
+  const changed =
+    name.trim() !== secret.name ||
+    username !== secret.username ||
+    url !== secret.url ||
+    description !== secret.description
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setError('')
+    setBusy(true)
+
+    try {
+      await api.updateSecret(secret.id, {
+        name: name.trim(),
+        username,
+        url,
+        description,
+      })
+      await onSaved()
+      onFlash('Details saved.')
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'The details could not be saved.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-4 border-t border-edge pt-4">
+      <p className="field-label">Details</p>
+
+      <Field label="Name">
+        <input className="field" value={name} onChange={(e) => setName(e.target.value)} required />
+      </Field>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Username" hint="The account this password belongs to.">
+          <input className="field" value={username} onChange={(e) => setUsername(e.target.value)} />
+        </Field>
+
+        <Field label="URL" hint="Where it is used. Include https://.">
+          <input
+            className="field"
+            type="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://example.com"
+          />
+        </Field>
+      </div>
+
+      <Field label="Note" hint="Never put the secret itself here.">
+        <input
+          className="field"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+      </Field>
+
+      {error && <Notice kind="error">{error}</Notice>}
+
+      <div className="flex items-center gap-3">
+        <button type="submit" className="btn-ghost" disabled={busy || !changed}>
+          {busy ? 'Saving…' : 'Save details'}
+        </button>
+        {secret.url && (
+          <a
+            href={secret.url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-brass hover:underline"
+          >
+            Open {secret.url}
+          </a>
+        )}
+      </div>
+    </form>
+  )
+}
+
 function SecretDetail({
   secret,
   groups,
@@ -596,6 +706,7 @@ function SecretDetail({
   const [busy, setBusy] = useState(false)
 
   const isOwner = secret.ownerId === user?.id
+  const canEdit = secret.canWrite && can('secrets:update')
 
   async function reveal() {
     setError('')
@@ -673,20 +784,26 @@ function SecretDetail({
           </dl>
         </div>
 
-        {secret.username && (
-          <div className="flex items-center gap-3 text-sm">
-            <span className="text-muted">Username</span>
-            <code className="text-chalk">{secret.username}</code>
-          </div>
-        )}
+        {canEdit ? (
+          <SecretDetailsForm secret={secret} onSaved={onSaved} onFlash={flashSaved} />
+        ) : (
+          <>
+            {secret.username && (
+              <div className="flex items-center gap-3 text-sm">
+                <span className="text-muted">Username</span>
+                <code className="text-chalk">{secret.username}</code>
+              </div>
+            )}
 
-        {secret.url && (
-          <div className="flex items-center gap-3 text-sm">
-            <span className="text-muted">URL</span>
-            <a href={secret.url} target="_blank" rel="noreferrer" className="text-brass hover:underline">
-              {secret.url}
-            </a>
-          </div>
+            {secret.url && (
+              <div className="flex items-center gap-3 text-sm">
+                <span className="text-muted">URL</span>
+                <a href={secret.url} target="_blank" rel="noreferrer" className="text-brass hover:underline">
+                  {secret.url}
+                </a>
+              </div>
+            )}
+          </>
         )}
 
         <div>
@@ -700,7 +817,7 @@ function SecretDetail({
           )}
         </div>
 
-        {secret.canWrite && can('secrets:update') && (
+        {canEdit && (
           <form onSubmit={rotate} className="space-y-2 border-t border-edge pt-4">
             <Field label="Replace value" hint="The previous value is kept in the version history.">
               <input
